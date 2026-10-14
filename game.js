@@ -13,8 +13,8 @@ const CFG = {
   gravity: 3000,      // px/s^2
   flipLaunch: 560,    // initial velocity on flip (px/s)
   baseSpeed: 340,
-  speedRamp: 7,       // +px/s per second survived
-  maxSpeed: 950,
+  speedRamp: 8,       // +px/s per second survived
+  maxSpeed: 1000,
   orbScore: 5,
   nearScore: 15,
   hitShrink: 7,       // forgiving hitboxes
@@ -163,12 +163,15 @@ function toggleMute() {
   store.set('gd_mute', muted ? '1' : '0');
   muteBtn.textContent = muted ? 'SOUND OFF' : 'SOUND ON';
   muteBtn.classList.toggle('off', muted);
+  if (muted) Music.stop();
+  else if (state === 'playing' && !paused) Music.start();
   if (!muted) SFX.click();
 }
 function togglePause(force) {
   paused = typeof force === 'boolean' ? force : !paused;
   pausedEl.classList.toggle('hidden', !paused);
-  if (!paused) lastT = performance.now(); // avoid dt jump
+  if (paused) { if (AC) AC.suspend(); }  // freezes AC clock: music resumes seamlessly
+  else { audio(); lastT = performance.now(); } // avoid dt jump
 }
 
 // ---------- Spawner: patterns ----------
@@ -179,11 +182,11 @@ function surfY(s) { return s === 'floor' ? floorY : ceilY; }
 function playerSurf() { return grav === 1 ? 'floor' : 'ceil'; }
 function oppSurf() { return grav === 1 ? 'ceil' : 'floor'; }
 
-function addSpike(x, s) {
+function addSpike(x, s, tag) {
   const w = 36, h = 54;
   obstacles.push({
     kind: 'spike', x, y: s === 'floor' ? floorY - h : ceilY,
-    w, h, minClear: Infinity, counted: false,
+    w, h, minClear: Infinity, counted: false, tag: tag || null,
   });
 }
 function addWall(x, s) { // tall block hugging a surface — must be on the other one
@@ -196,13 +199,41 @@ function addWall(x, s) { // tall block hugging a surface — must be on the othe
 function addOrb(x, y) {
   orbs.push({ x, y, r: 11, taken: false, ph: Math.random() * 6.28 });
 }
-function gapAfter() { return speed * rand(0.55, 0.85); } // time-based spacing
+function addGate(x) {
+  // Two amber walls leaving a generous middle window — flip THROUGH it
+  // mid-air. Window sized so the pass is always possible: the mid-gap
+  // flight window (~0.22s) must exceed the gate crossing time.
+  const wh = Math.round(gapH * 0.22), w = 48;
+  obstacles.push({ kind: 'gate', x, y: floorY - wh, w, h: wh, minClear: Infinity, counted: false });
+  obstacles.push({ kind: 'gate', x, y: ceilY, w, h: wh, minClear: Infinity, counted: false });
+}
+function addDrifter(x) {
+  // a spiked mine hovering mid-gap, oscillating vertically — time your pass
+  const s = 46;
+  obstacles.push({
+    kind: 'drifter', x, y: (floorY + ceilY) / 2 - s / 2, w: s, h: s,
+    ph: Math.random() * 6.28, minClear: Infinity, counted: false,
+  });
+}
+function gapAfter() { return speed * rand(0.50, 0.80); } // time-based spacing
 
 // pattern fns: each takes x, emits entities, returns footprint width
 function patMustSpike(x)   { addSpike(x, playerSurf()); consecCost++; return 120; }
 function patFreeSpike(x)   { addSpike(x, oppSurf()); consecCost = 0; return 120; }
 function patWall(x)        { addWall(x, playerSurf()); consecCost++; return 150; }
 function patDouble(x)      { addSpike(x, 'floor'); addSpike(x, 'ceil'); consecCost++; return 140; }
+function patGate(x)        { addGate(x); consecCost++; return 170; }
+function patStairs(x) {
+  // Two spikes, one per surface: dodge the first, and the second sits
+  // exactly where you land — a forced double-flip rhythm test (costs 2).
+  // Landing time after a flip: 1500t^2 + 560t = gapH.
+  const s1 = playerSurf(), s2 = oppSurf();
+  addSpike(x, s1, 'stairs');
+  const tLand = (-CFG.flipLaunch + Math.sqrt(CFG.flipLaunch * CFG.flipLaunch + 2 * CFG.gravity * gapH)) / CFG.gravity;
+  addSpike(x + speed * tLand + 130, s2, 'stairs');
+  consecCost += 2; return 340;
+}
+function patDrifter(x)     { addDrifter(x); consecCost++; return 150; }
 function patOrbArc(x) {
   const from = playerSurf(), y0 = surfY(from), y1 = surfY(oppSurf());
   const dir0 = from === 'floor' ? -1 : 1, dir1 = -dir0;
@@ -228,11 +259,14 @@ function choosePattern(x) {
     if (r < 0.78) return patOrbLine(x);
     return patRest();
   }
-  if (r < 0.28) return patMustSpike(x);
-  if (r < 0.46) return patFreeSpike(x);
-  if (r < 0.58) return patWall(x);
-  if (r < 0.68 && elapsed > 25) return patDouble(x);
-  if (r < 0.86) return patOrbArc(x);
+  if (r < 0.24) return patMustSpike(x);
+  if (r < 0.40) return patFreeSpike(x);
+  if (r < 0.50) return patWall(x);
+  if (r < 0.58 && elapsed > 15) return patDouble(x);
+  if (r < 0.68 && elapsed > 20) return patGate(x);
+  if (r < 0.78 && elapsed > 30) return patStairs(x);
+  if (r < 0.86 && elapsed > 40) return patDrifter(x);
+  if (r < 0.96) return patOrbArc(x);
   return patRest();
 }
 
@@ -255,6 +289,7 @@ function startGame() {
   $('share-note').classList.add('hidden');
   renderPips(); setScore(0); refreshBest();
   lastT = performance.now();
+  Music.start();
 }
 
 function doFlip() {
@@ -417,8 +452,14 @@ function update(dt) {
 
   // --- move world left ---
   const dx = speed * dt;
+  const midY = (floorY + ceilY) / 2;
   for (const ob of obstacles) {
     ob.x -= dx;
+    if (ob.kind === 'drifter') {
+      // hover mid-gap, oscillating wide — at extremes it grazes the rails,
+      // so you must read its swing and time your pass (or flip away)
+      ob.y = midY - ob.h / 2 + Math.sin(elapsed * 3.1 + ob.ph) * gapH * 0.44;
+    }
     // near-miss tracking: closest approach of the forgiving hitbox
     if (!ob.counted && px > ob.x - 90 && px < ob.x + ob.w + 90) {
       const d = circleRectDist(px, py, shrunkRect(ob));
@@ -546,8 +587,61 @@ function drawOrbs(t) {
   }
 }
 
-function drawObstacles() {
+function drawObstacles(t) {
   for (const ob of obstacles) {
+    if (ob.kind === 'drifter') {
+      // rotating spiked mine, ember-orange glow
+      const cx = ob.x + ob.w / 2, cy = ob.y + ob.h / 2, R = ob.w / 2;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(t * 3.2 + ob.ph);
+      ctx.shadowColor = '#ff7a2e';
+      ctx.shadowBlur = 16;
+      ctx.fillStyle = '#331104';
+      ctx.strokeStyle = '#ff7a2e';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      const teeth = 8;
+      for (let i = 0; i < teeth; i++) {
+        const a = (i / teeth) * 6.2832;
+        const a2 = ((i + 0.5) / teeth) * 6.2832;
+        ctx.lineTo(Math.cos(a) * R, Math.sin(a) * R);
+        ctx.lineTo(Math.cos(a2) * R * 0.62, Math.sin(a2) * R * 0.62);
+      }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = '#ffd94d';
+      ctx.beginPath(); ctx.arc(0, 0, R * 0.34, 0, 6.2832); ctx.fill();
+      ctx.restore();
+      continue;
+    }
+    if (ob.kind === 'gate') {
+      // amber gate wall — chevrons point at the safe middle window
+      ctx.save();
+      ctx.shadowColor = '#ffb02e';
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = 'rgba(64,32,4,0.9)';
+      ctx.strokeStyle = '#ffb02e';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.roundRect(ob.x, ob.y, ob.w, ob.h, 8);
+      ctx.fill(); ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,176,46,' + (0.55 + 0.3 * Math.sin(t * 6)).toFixed(3) + ')';
+      const top = ob.y < H / 2; // ceiling gate points down, floor gate points up
+      const ay = top ? ob.y + ob.h - 16 : ob.y + 16;
+      const dir = top ? 1 : -1;
+      for (let i = 0; i < 2; i++) {
+        const yy = ay - dir * i * 14;
+        ctx.beginPath();
+        ctx.moveTo(ob.x + ob.w / 2 - 9, yy - dir * 6);
+        ctx.lineTo(ob.x + ob.w / 2, yy + dir * 6);
+        ctx.lineTo(ob.x + ob.w / 2 + 9, yy - dir * 6);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+      continue;
+    }
     if (ob.kind === 'spike') {
       const onFloor = ob.y > H / 2;
       ctx.save();
@@ -688,7 +782,7 @@ function render(t) {
   drawBackground(t);
   drawRails();
   drawOrbs(t);
-  drawObstacles();
+  drawObstacles(t);
   drawFx();
   drawPlayer(t);
   drawHint(t);
@@ -710,6 +804,20 @@ function loop(now) {
   render(now / 1000);
 }
 
+// Read-only debug handle for automated QA (no gameplay effect).
+window.__gd = {
+  get state() { return state; },
+  get elapsed() { return elapsed; },
+  get energy() { return energy; },
+  get grav() { return grav; },
+  get onSurface() { return onSurface; },
+  get px() { return px; },
+  get speed() { return speed; },
+  get obstacles() {
+    return obstacles.map(o => ({ x: o.x, y: o.y, w: o.w, h: o.h, kind: o.kind, tag: o.tag || null }));
+  },
+};
+
 // ---------- Boot ----------
 muteBtn.textContent = muted ? 'SOUND OFF' : 'SOUND ON';
 muteBtn.classList.toggle('off', muted);
@@ -718,3 +826,101 @@ renderPips();
 refreshBest();
 setScore(0);
 requestAnimationFrame(loop);
+
+// ---------- Generative space music (procedural, zero assets) ----------
+// Slow evolving pad (Am – F – C – G) + sparse pentatonic plucks through
+// a feedback echo. Scheduled with a lookahead timer; pausing suspends
+// the AudioContext, which freezes its clock, so music resumes seamlessly.
+const Music = (() => {
+  const CHORD_LEN = 8; // seconds per chord
+  const CHORDS = [
+    [110.00, 164.81, 220.00, 261.63, 246.94], // Am(add9)
+    [ 87.31, 130.81, 174.61, 220.00, 329.63], // Fmaj7
+    [130.81, 196.00, 261.63, 329.63, 293.66], // C(add9)
+    [ 98.00, 146.83, 196.00, 246.94, 220.00], // G(add9)
+  ];
+  const PENTA = [440.00, 523.25, 587.33, 659.25, 783.99, 880.00];
+  let timer = null, padBus = null, delaySend = null, master = null;
+  let nextChord = 0, nextArp = 0, chordIdx = 0, arpIdx = 2;
+
+  function ensureGraph() {
+    const c = audio(); if (!c) return false;
+    if (master) return true;
+    master = c.createGain(); master.gain.value = 0.5; master.connect(c.destination);
+    const lp = c.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 1050; lp.Q.value = 0.4;
+    padBus = c.createGain(); padBus.gain.value = 0.5;
+    padBus.connect(lp); lp.connect(master);
+    const dly = c.createDelay(1.5); dly.delayTime.value = 0.42;
+    const fb = c.createGain(); fb.gain.value = 0.38;
+    const wet = c.createGain(); wet.gain.value = 0.45;
+    delaySend = c.createGain();
+    delaySend.connect(dly); dly.connect(fb); fb.connect(dly);
+    dly.connect(wet); wet.connect(master);
+    return true;
+  }
+
+  function padChord(notes, t) {
+    const c = AC;
+    for (const f of notes) {
+      for (const det of [-5, 5]) {
+        const o = c.createOscillator(), g = c.createGain();
+        o.type = 'triangle'; o.frequency.value = f; o.detune.value = det;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.linearRampToValueAtTime(0.045, t + 2.5);
+        g.gain.setValueAtTime(0.045, t + CHORD_LEN - 2);
+        g.gain.linearRampToValueAtTime(0.0001, t + CHORD_LEN + 1.5);
+        o.connect(g); g.connect(padBus);
+        o.start(t); o.stop(t + CHORD_LEN + 2);
+      }
+    }
+    const o = c.createOscillator(), g = c.createGain(); // sub root
+    o.type = 'sine'; o.frequency.value = notes[0] / 2;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(0.08, t + 2);
+    g.gain.linearRampToValueAtTime(0.0001, t + CHORD_LEN + 1);
+    o.connect(g); g.connect(padBus);
+    o.start(t); o.stop(t + CHORD_LEN + 1.5);
+  }
+
+  function pluck(t) {
+    const c = AC;
+    arpIdx += (Math.random() < 0.5 ? -1 : 1) * (Math.random() < 0.25 ? 2 : 1);
+    arpIdx = clamp(arpIdx, 0, PENTA.length - 1);
+    const o = c.createOscillator(), g = c.createGain();
+    o.type = 'sine'; o.frequency.value = PENTA[arpIdx];
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.10, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.4);
+    o.connect(g); g.connect(master); g.connect(delaySend);
+    o.start(t); o.stop(t + 1.6);
+  }
+
+  function schedule() {
+    if (!AC || muted) return;
+    const now = AC.currentTime;
+    while (nextChord < now + 1.2) {
+      padChord(CHORDS[chordIdx % CHORDS.length], Math.max(nextChord, now + 0.05));
+      nextChord += CHORD_LEN;
+      chordIdx++;
+    }
+    while (nextArp < now + 0.8) {
+      if (Math.random() < 0.55) pluck(Math.max(nextArp, now + 0.05));
+      nextArp += 0.45;
+    }
+  }
+
+  return {
+    start() {
+      if (timer || muted) return;
+      if (!ensureGraph()) return;
+      const now = AC.currentTime;
+      nextChord = now + 0.1; nextArp = now + 1.2; chordIdx = 0;
+      schedule();
+      timer = setInterval(schedule, 250);
+    },
+    stop() {
+      if (timer) { clearInterval(timer); timer = null; }
+    },
+  };
+})();
