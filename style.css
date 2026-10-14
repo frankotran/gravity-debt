@@ -76,6 +76,18 @@ html, body {
   color: #8a8aa3;
 }
 
+#timer {
+  position: absolute;
+  top: calc(max(10px, env(safe-area-inset-top)) + clamp(40px, 8.2vw, 62px));
+  left: 0; right: 0;
+  text-align: center;
+  font-family: 'Orbitron', monospace;
+  font-size: clamp(14px, 3vw, 19px);
+  letter-spacing: 4px;
+  color: #8a8aa3;
+  text-shadow: 0 0 10px rgba(138, 138, 163, .45);
+}
+
 /* ---------- Overlays ---------- */
 .overlay {
   position: fixed; inset: 0;

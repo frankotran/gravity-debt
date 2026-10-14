@@ -110,7 +110,7 @@ let stars = [];
 const $ = id => document.getElementById(id);
 const hud = $('hud'), scoreEl = $('score'), pipsEl = $('energy-pips'),
       bestHud = $('best-hud'), menu = $('menu'), gameoverEl = $('gameover'),
-      pausedEl = $('paused'), muteBtn = $('mute-btn');
+      pausedEl = $('paused'), muteBtn = $('mute-btn'), timerEl = $('timer');
 
 function renderPips() {
   let html = '';
@@ -122,6 +122,15 @@ function renderPips() {
   pipsEl.innerHTML = html;
 }
 function setScore(v) { scoreEl.textContent = Math.floor(v); }
+function fmtTime(s) {
+  s = Math.floor(s);
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+let lastTimerShown = '';
+function tickTimer() {
+  const t = fmtTime(elapsed);
+  if (t !== lastTimerShown) { lastTimerShown = t; timerEl.textContent = t; }
+}
 function refreshBest() {
   bestHud.textContent = 'BEST ' + best;
   $('menu-best').textContent = 'BEST ' + best;
@@ -294,6 +303,7 @@ function startGame() {
   hud.classList.remove('hidden');
   $('share-note').classList.add('hidden');
   renderPips(); setScore(0); refreshBest();
+  lastTimerShown = ''; timerEl.textContent = '0:00';
   lastT = performance.now();
   Music.start();
 }
@@ -507,6 +517,7 @@ function update(dt) {
   // --- score: survive = points ---
   score += speed * dt * 0.02;
   setScore(score);
+  tickTimer();
 }
 
 function updateDying(dt) {
