@@ -62,6 +62,7 @@ const SFX = {
   death: () => beep(170, 0.45, 'sawtooth', 0.14, 38),
   deny:  () => beep(150, 0.16, 'square', 0.09, 85),
   click: () => beep(640, 0.06, 'sine', 0.07),
+  boing: () => beep(430, 0.16, 'triangle', 0.12, 150),
 };
 
 // ---------- Canvas ----------
@@ -95,6 +96,7 @@ window.addEventListener('orientationchange', () => setTimeout(resize, 120));
 let state = 'menu';           // menu | playing | dying | over
 let paused = false;
 let grav = 1;                 // +1 = pulled to floor, -1 = pulled to ceiling
+let flipFrom = 1;             // gravity direction before the latest flip (bounce pads restore it)
 let px = 0, py = 0, vy = 0;
 let onSurface = true;
 let energy = CFG.energyStart;
@@ -102,7 +104,7 @@ let score = 0, elapsed = 0, speed = CFG.baseSpeed;
 let flips = 0, orbsGot = 0, nearCount = 0;
 let best = parseInt(store.get('gd_best') || '0', 10) || 0;
 let shake = 0, deathT = 0, denyFlash = 0;
-let obstacles = [], orbs = [], particles = [], floaters = [], trail = [], waves = [];
+let obstacles = [], orbs = [], pads = [], particles = [], floaters = [], trail = [], waves = [];
 let spawnX = 0, consecCost = 0, railOff = 0;
 let stars = [];
 
@@ -230,6 +232,10 @@ function addDrifter(x) {
     ph: Math.random() * 6.28, minClear: Infinity, counted: false,
   });
 }
+function addPad(x, y) {
+  // friendly mid-air platform: touch it mid-flip and bounce back home
+  pads.push({ x: x - 48, y: y - 7, w: 96, h: 14, ph: Math.random() * 6.28 });
+}
 function gapAfter() { return speed * rand(0.50, 0.80); } // time-based spacing
 
 // pattern fns: each takes x, emits entities, returns footprint width
@@ -249,6 +255,15 @@ function patStairs(x) {
   consecCost += 2; return 340;
 }
 function patDrifter(x)     { addDrifter(x); consecCost++; return 150; }
+function patHop(x) {
+  // spike on your rail with a bounce pad floating above it:
+  // flip, kiss the pad, and land back home — hop OVER the spike
+  // without ever visiting the other side
+  const sx = x + 130;
+  addSpike(sx, playerSurf());
+  addPad(sx, (floorY + ceilY) / 2);
+  consecCost++; return 300;
+}
 function patOrbArc(x) {
   const from = playerSurf(), y0 = surfY(from), y1 = surfY(oppSurf());
   const dir0 = from === 'floor' ? -1 : 1, dir1 = -dir0;
@@ -274,13 +289,14 @@ function choosePattern(x) {
     if (r < 0.78) return patOrbLine(x);
     return patRest();
   }
-  if (r < 0.24) return patMustSpike(x);
-  if (r < 0.40) return patFreeSpike(x);
-  if (r < 0.50) return patWall(x);
-  if (r < 0.58 && elapsed > 15) return patDouble(x);
-  if (r < 0.68 && elapsed > 20) return patGate(x);
-  if (r < 0.78 && elapsed > 30) return patStairs(x);
-  if (r < 0.86 && elapsed > 40) return patDrifter(x);
+  if (r < 0.22) return patMustSpike(x);
+  if (r < 0.37) return patFreeSpike(x);
+  if (r < 0.46) return patWall(x);
+  if (r < 0.53 && elapsed > 15) return patDouble(x);
+  if (r < 0.62 && elapsed > 20) return patGate(x);
+  if (r < 0.71 && elapsed > 30) return patStairs(x);
+  if (r < 0.78 && elapsed > 40) return patDrifter(x);
+  if (r < 0.86 && elapsed > 15) return patHop(x);
   if (r < 0.96) return patOrbArc(x);
   return patRest();
 }
@@ -294,7 +310,7 @@ function startGame() {
   score = 0; elapsed = 0; speed = CFG.baseSpeed;
   flips = 0; orbsGot = 0; nearCount = 0;
   shake = 0; denyFlash = 0;
-  obstacles = []; orbs = []; particles = []; floaters = []; trail = []; waves = [];
+  obstacles = []; orbs = []; pads = []; particles = []; floaters = []; trail = []; waves = [];
   spawnX = W + 420; consecCost = 0;
   state = 'playing'; paused = false;
   menu.classList.add('hidden');
@@ -316,6 +332,7 @@ function doFlip() {
     return;
   }
   energy--;
+  flipFrom = grav; // remember where we came from — a bounce pad sends us back
   grav *= -1;
   vy = grav * CFG.flipLaunch; // launch toward the new surface
   onSurface = false;
@@ -357,6 +374,37 @@ function nearMiss(ob) {
   setScore(score);
   floater(px + 10, py - 40, 'CLOSE +' + CFG.nearScore, '#7dff9a');
   SFX.near();
+}
+
+function bouncePad(pd) {
+  // trampoline: cancel the flip, fling back toward the side we came from
+  grav = flipFrom;
+  vy = flipFrom * CFG.flipLaunch;
+  onSurface = false;
+  score += 5;
+  setScore(score);
+  floater(px, py - 42, 'BOUNCE +5', '#7dff9a');
+  waves.push({ x: px, y: py, r: CFG.playerR, life: 1 });
+  for (let i = 0; i < 12; i++) {
+    particles.push({
+      x: px + rand(-8, 8), y: pd.y + pd.h / 2,
+      vx: rand(-220, 220), vy: rand(-180, 180),
+      life: rand(0.25, 0.5), max: 0.5, size: rand(2, 5),
+      color: ['#7df9ff', '#ffffff'][i % 2],
+    });
+  }
+  shake = Math.max(shake, 4);
+  SFX.boing();
+}
+
+function checkPadCollision() {
+  const pr = CFG.playerR - 3;
+  for (const pd of pads) {
+    if (px + pr > pd.x && px - pr < pd.x + pd.w && py + pr > pd.y && py - pr < pd.y + pd.h) {
+      bouncePad(pd);
+      break;
+    }
+  }
 }
 
 function die() {
@@ -495,6 +543,11 @@ function update(dt) {
   }
   obstacles = obstacles.filter(o => o.x + o.w > -120 && !(o.counted && o.x + o.w < -40));
   orbs = orbs.filter(o => o.x > -60 && !o.taken);
+  for (const pd of pads) pd.x -= dx;
+  pads = pads.filter(pd => pd.x + pd.w > -100);
+
+  // --- bounce pads: mid-air contact sends you back to your side ---
+  if (state === 'playing' && !onSurface) checkPadCollision();
 
   // --- collisions (forgiving hitboxes) ---
   const pr = CFG.playerR - 3;
@@ -736,6 +789,37 @@ function drawPlayer(t) {
   ctx.restore();
 }
 
+function drawPads(t) {
+  for (const pd of pads) {
+    const pulse = 0.65 + 0.35 * Math.sin(t * 5 + pd.ph);
+    ctx.save();
+    // glowing bar
+    ctx.shadowColor = '#7df9ff';
+    ctx.shadowBlur = 16 * pulse;
+    const g = ctx.createLinearGradient(pd.x, 0, pd.x + pd.w, 0);
+    g.addColorStop(0, 'rgba(125,249,255,0.25)');
+    g.addColorStop(0.5, '#eaffff');
+    g.addColorStop(1, 'rgba(125,249,255,0.25)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.roundRect(pd.x, pd.y, pd.w, pd.h, 7);
+    ctx.fill();
+    // chevrons above/below pointing away — it bounces you back
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(125,249,255,' + (0.5 + 0.35 * pulse).toFixed(3) + ')';
+    const cx = pd.x + pd.w / 2;
+    for (const s of [-1, 1]) {
+      const yy = s === -1 ? pd.y - 10 : pd.y + pd.h + 10;
+      ctx.beginPath();
+      ctx.moveTo(cx - 8, yy + s * 5);
+      ctx.lineTo(cx, yy - s * 5);
+      ctx.lineTo(cx + 8, yy + s * 5);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
 function drawFx() {
   for (const p of particles) {
     ctx.globalAlpha = Math.max(0, p.life / p.max);
@@ -800,6 +884,7 @@ function render(t) {
   drawRails();
   drawOrbs(t);
   drawObstacles(t);
+  drawPads(t);
   drawFx();
   drawPlayer(t);
   drawHint(t);
