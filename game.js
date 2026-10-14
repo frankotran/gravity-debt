@@ -142,8 +142,14 @@ function onPress(e) {
 canvas.addEventListener('pointerdown', onPress);
 menu.addEventListener('pointerdown', e => { e.preventDefault(); SFX.click(); startGame(); });
 $('start-btn').addEventListener('click', e => e.stopPropagation());
-gameoverEl.addEventListener('pointerdown', e => { e.preventDefault(); startGame(); });
-$('retry-btn').addEventListener('click', e => e.stopPropagation());
+gameoverEl.addEventListener('pointerdown', e => {
+  // tap-anywhere to retry, but let the buttons handle their own taps —
+  // otherwise SHARE would restart the game before its click fires
+  if (e.target.closest && e.target.closest('button')) return;
+  e.preventDefault();
+  startGame();
+});
+$('retry-btn').addEventListener('click', e => { e.stopPropagation(); startGame(); });
 $('share-btn').addEventListener('click', e => { e.stopPropagation(); shareScore(); });
 $('resume-btn').addEventListener('click', () => togglePause(false));
 muteBtn.addEventListener('click', e => { e.stopPropagation(); toggleMute(); });
