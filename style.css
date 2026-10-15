@@ -111,6 +111,18 @@ html, body {
   background: linear-gradient(90deg, #ff9d2e, #ffd94d);
   border-radius: 2px;
 }
+
+#fx-status {
+  position: absolute;
+  top: calc(max(18px, env(safe-area-inset-top)) + 64px);
+  right: 18px;
+  text-align: right;
+  display: none;
+  font-family: 'Orbitron', monospace;
+  font-size: 11px; letter-spacing: 2px;
+  color: #7df9ff;
+  text-shadow: 0 0 10px rgba(125, 249, 255, .6);
+}
 .best-line.dim { color: #6a6a85; margin-top: 8px; }
 
 #timer {

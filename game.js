@@ -64,6 +64,7 @@ const SFX = {
   click: () => beep(640, 0.06, 'sine', 0.07),
   boing: () => beep(430, 0.16, 'triangle', 0.12, 150),
   power: () => beep(700, 0.12, 'square', 0.07, 1500),
+  warn: () => { beep(300, 0.15, 'square', 0.09, 180); setTimeout(() => beep(300, 0.15, 'square', 0.09, 180), 200); },
   fanfare: () => {
     beep(523, 0.12, 'triangle', 0.10);
     setTimeout(() => beep(659, 0.12, 'triangle', 0.10), 110);
@@ -76,6 +77,10 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 let W = 0, H = 0, DPR = 1;
 let floorY = 0, ceilY = 0, gapH = 0;
+
+function buzz(pattern) {
+  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) { /* desktop: no-op */ }
+}
 
 function resize() {
   DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -110,7 +115,7 @@ let score = 0, elapsed = 0, speed = CFG.baseSpeed;
 let flips = 0, orbsGot = 0, nearCount = 0;
 let best = parseInt(store.get('gd_best') || '0', 10) || 0;
 let shake = 0, deathT = 0, denyFlash = 0;
-let obstacles = [], orbs = [], pads = [], particles = [], floaters = [], trail = [], waves = [];
+let obstacles = [], orbs = [], pads = [], powerups = [], particles = [], floaters = [], trail = [], waves = [];
 let spawnX = 0, consecCost = 0, railOff = 0;
 let stars = [];
 // retention systems: combo, ghost pace, achievements, juice
@@ -120,6 +125,12 @@ let bestCurve = null;
 try { bestCurve = JSON.parse(store.get('gd_bestcurve') || 'null'); } catch (e) { bestCurve = null; }
 if (!Array.isArray(bestCurve)) bestCurve = null;
 let slowmoT = 0, freezeT = 0, flash = 0;
+// powerups & surge events
+let shield = false, magnetT = 0, surgeT = 0, invulnT = 0;
+let eventSurgeT = 0, surgeWarnT = 0, nextSurgeAt = 45;
+// career stats & streak (persistent)
+let career = { flips: 0, time: 0, bestMult: 1, runs: 0 };
+try { career = Object.assign(career, JSON.parse(store.get('gd_career') || '{}')); } catch (e) {}
 
 // ---------- DOM ----------
 const $ = id => document.getElementById(id);
@@ -127,7 +138,7 @@ const hud = $('hud'), scoreEl = $('score'), pipsEl = $('energy-pips'),
       bestHud = $('best-hud'), menu = $('menu'), gameoverEl = $('gameover'),
       pausedEl = $('paused'), muteBtn = $('mute-btn'), timerEl = $('timer'),
       paceEl = $('pace'), comboEl = $('combo'), comboTxt = $('combo-txt'),
-      comboBar = $('combo-bar');
+      comboBar = $('combo-bar'), fxEl = $('fx-status');
 
 function renderPips() {
   let html = '';
@@ -143,6 +154,17 @@ function fmtTime(s) {
   s = Math.floor(s);
   return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }
+function fxStatus() {
+  const parts = [];
+  if (shield) parts.push('SHIELD');
+  if (magnetT > 0) parts.push('MAGNET ' + Math.ceil(magnetT) + 's');
+  if (surgeT > 0) parts.push('OVERDRIVE ' + Math.ceil(surgeT) + 's');
+  if (eventSurgeT > 0) parts.push('SURGE ' + Math.ceil(eventSurgeT) + 's');
+  else if (surgeWarnT > 0) parts.push('SURGE INCOMING');
+  fxEl.textContent = parts.join(' · ');
+  fxEl.style.display = parts.length ? 'block' : 'none';
+}
+
 let lastTimerShown = '';
 function tickTimer() {
   const t = fmtTime(elapsed);
@@ -161,6 +183,7 @@ function tickTimer() {
     const fs = Math.floor(score);
     if (fs >= 500) unlockAch('score500');
     if (fs >= 1000) unlockAch('score1000');
+    fxStatus();
   }
   if (elapsed >= 30) unlockAch('survive30');
   if (elapsed >= 60) unlockAch('survive60');
@@ -171,6 +194,63 @@ function refreshBest() {
 }
 function floater(x, y, txt, color) {
   floaters.push({ x, y, txt, color: color || '#fff', life: 1 });
+}
+
+// ---------- Powerup & surge multipliers ----------
+function speedMult() {
+  let m = 1;
+  if (surgeT > 0) m *= 1.25;      // overdrive pickup
+  if (eventSurgeT > 0) m *= 1.2;  // timed surge event
+  return m;
+}
+function scoreMult() {
+  let m = 1;
+  if (surgeT > 0) m *= 2;
+  if (eventSurgeT > 0) m *= 2;
+  return m;
+}
+
+function collectPowerup(p) {
+  p.taken = true;
+  feedCombo();
+  if (p.kind === 'shield') {
+    shield = true;
+    floater(px, py - 42, 'SHIELD UP', '#7df9ff');
+  } else if (p.kind === 'magnet') {
+    magnetT = 8;
+    floater(px, py - 42, 'MAGNET 8s', '#ff5e7a');
+  } else {
+    surgeT = 10;
+    floater(px, py - 42, 'OVERDRIVE x2', '#ff9d2e');
+  }
+  unlockAch('powerup');
+  SFX.power();
+  buzz([30, 30, 30]);
+  fxStatus();
+  waves.push({ x: p.x, y: p.y, r: 8, life: 0.8 });
+}
+
+function smashShield(ob, i) {
+  // shield absorbs a lethal hit: the obstacle shatters instead of you
+  shield = false;
+  invulnT = 1.2;
+  obstacles.splice(i, 1);
+  const pts = 25 * scoreMult();
+  score += pts;
+  setScore(score);
+  floater(px, py - 42, 'SHIELD DOWN +' + pts, '#7df9ff');
+  waves.push({ x: px, y: py, r: 12, life: 1 });
+  for (let k = 0; k < 16; k++) {
+    particles.push({
+      x: ob.x + ob.w / 2, y: ob.y + ob.h / 2,
+      vx: rand(-260, 260), vy: rand(-260, 260),
+      life: rand(0.3, 0.6), max: 0.6, size: rand(2, 6), color: '#7df9ff',
+    });
+  }
+  shake = Math.max(shake, 10);
+  SFX.power();
+  buzz([40, 40, 40]);
+  fxStatus();
 }
 
 // ---------- Achievements (persistent) ----------
@@ -185,6 +265,7 @@ const ACHS = [
   { id: 'orb10',      label: '10 orbs, one run' },
   { id: 'score500',   label: 'Score 500' },
   { id: 'score1000',  label: 'Score 1000' },
+  { id: 'powerup',    label: 'Grab a powerup' },
 ];
 let ach = {};
 try { ach = JSON.parse(store.get('gd_ach') || '{}') || {}; } catch (e) { ach = {}; }
@@ -209,8 +290,10 @@ function feedCombo() {
   const nm = 1 + Math.min(4, Math.floor(combo / 3));
   if (nm > mult) {
     mult = nm;
+    career.bestMult = Math.max(career.bestMult, mult);
     floater(px, py - 66, 'COMBO x' + mult, '#ff9d2e');
     SFX.power();
+    buzz([15, 40, 15]);
     if (mult === 3) unlockAch('combo3');
     if (mult === 5) unlockAch('combo5');
   }
@@ -360,6 +443,16 @@ function patHop(x) {
   addPad(sx, (floorY + ceilY) / 2);
   consecCost++; return 300;
 }
+function patPowerup(x) {
+  // rare floating pickup: shield / magnet / overdrive — always optional
+  const kinds = ['shield', 'magnet', 'overdrive'];
+  const kind = kinds[(Math.random() * kinds.length) | 0];
+  powerups.push({
+    x: x + 110, y: (floorY + ceilY) / 2 + rand(-70, 70),
+    r: 20, kind, taken: false, ph: Math.random() * 6.28,
+  });
+  return 230;
+}
 function patOrbArc(x) {
   const from = playerSurf(), y0 = surfY(from), y1 = surfY(oppSurf());
   const dir0 = from === 'floor' ? -1 : 1, dir1 = -dir0;
@@ -385,15 +478,16 @@ function choosePattern(x) {
     if (r < 0.78) return patOrbLine(x);
     return patRest();
   }
-  if (r < 0.22) return patMustSpike(x);
-  if (r < 0.37) return patFreeSpike(x);
-  if (r < 0.46) return patWall(x);
-  if (r < 0.53 && elapsed > 15) return patDouble(x);
-  if (r < 0.62 && elapsed > 20) return patGate(x);
-  if (r < 0.71 && elapsed > 30) return patStairs(x);
-  if (r < 0.78 && elapsed > 40) return patDrifter(x);
-  if (r < 0.86 && elapsed > 15) return patHop(x);
-  if (r < 0.96) return patOrbArc(x);
+  if (r < 0.21) return patMustSpike(x);
+  if (r < 0.35) return patFreeSpike(x);
+  if (r < 0.44) return patWall(x);
+  if (r < 0.51 && elapsed > 15) return patDouble(x);
+  if (r < 0.60 && elapsed > 20) return patGate(x);
+  if (r < 0.69 && elapsed > 30) return patStairs(x);
+  if (r < 0.76 && elapsed > 40) return patDrifter(x);
+  if (r < 0.84 && elapsed > 15) return patHop(x);
+  if (r < 0.90 && elapsed > 25) return patPowerup(x);
+  if (r < 0.98) return patOrbArc(x);
   return patRest();
 }
 
@@ -406,7 +500,7 @@ function startGame() {
   score = 0; elapsed = 0; speed = CFG.baseSpeed;
   flips = 0; orbsGot = 0; nearCount = 0;
   shake = 0; denyFlash = 0;
-  obstacles = []; orbs = []; pads = []; particles = []; floaters = []; trail = []; waves = [];
+  obstacles = []; orbs = []; pads = []; powerups = []; particles = []; floaters = []; trail = []; waves = [];
   spawnX = W + 420; consecCost = 0;
   state = 'playing'; paused = false;
   menu.classList.add('hidden');
@@ -418,8 +512,12 @@ function startGame() {
   lastTimerShown = ''; timerEl.textContent = '0:00';
   paceEl.style.display = 'none';
   combo = 0; comboT = 0; mult = 1; renderCombo();
+  fxEl.style.display = 'none';
   runCurve = []; lastCurveSample = 0; bouncesThisRun = 0;
   slowmoT = 0; freezeT = 0; flash = 0;
+  shield = false; magnetT = 0; surgeT = 0; invulnT = 0;
+  eventSurgeT = 0; surgeWarnT = 0; nextSurgeAt = 45;
+  career.runs++;
   lastT = performance.now();
   Music.start();
 }
@@ -437,6 +535,7 @@ function doFlip() {
   vy = grav * CFG.flipLaunch; // launch toward the new surface
   onSurface = false;
   flips++;
+  career.flips++;
   unlockAch('firstflip');
   shake = Math.max(shake, 3);
   waves.push({ x: px, y: py, r: CFG.playerR, life: 1 });
@@ -449,6 +548,7 @@ function doFlip() {
     });
   }
   SFX.flip();
+  buzz(12);
   renderPips();
 }
 
@@ -457,7 +557,7 @@ function collectOrb(o) {
   energy = Math.min(CFG.energyMax, energy + 1);
   orbsGot++;
   feedCombo();
-  const pts = CFG.orbScore * mult;
+  const pts = CFG.orbScore * mult * scoreMult();
   score += pts;
   setScore(score);
   floater(o.x, o.y - 18, '+' + pts, '#ffd94d');
@@ -476,7 +576,7 @@ function collectOrb(o) {
 function nearMiss(ob) {
   nearCount++;
   feedCombo();
-  const pts = CFG.nearScore * mult;
+  const pts = CFG.nearScore * mult * scoreMult();
   score += pts;
   setScore(score);
   floater(px + 10, py - 40, 'CLOSE +' + pts, '#7dff9a');
@@ -490,7 +590,7 @@ function bouncePad(pd) {
   vy = flipFrom * CFG.flipLaunch;
   onSurface = false;
   feedCombo();
-  const pts = 5 * mult;
+  const pts = 5 * mult * scoreMult();
   score += pts;
   setScore(score);
   floater(px, py - 42, 'BOUNCE +' + pts, '#7dff9a');
@@ -526,6 +626,7 @@ function die() {
   freezeT = 0.12;  // freeze-frame beat before the explosion settles
   flash = 0.55;    // white flash
   SFX.death();
+  buzz([60, 40, 80]);
   for (let i = 0; i < 70; i++) {
     particles.push({
       x: px, y: py, vx: rand(-380, 380), vy: rand(-380, 380),
@@ -547,6 +648,8 @@ function showGameOver() {
     bestCurve = runCurve.slice(); // ghost for future runs to chase
     store.set('gd_bestcurve', JSON.stringify(bestCurve));
   }
+  career.time += elapsed;
+  store.set('gd_career', JSON.stringify(career));
   $('final-score').textContent = fs;
   $('newbest').classList.toggle('hidden', !isBest);
   $('st-time').textContent = Math.floor(elapsed) + 's';
@@ -636,7 +739,7 @@ function update(dt) {
   }
 
   // --- move world left ---
-  const dx = speed * dt;
+  const dx = speed * speedMult() * dt;
   const midY = (floorY + ceilY) / 2;
   for (const ob of obstacles) {
     ob.x -= dx;
@@ -667,17 +770,66 @@ function update(dt) {
   orbs = orbs.filter(o => o.x > -60 && !o.taken);
   for (const pd of pads) pd.x -= dx;
   pads = pads.filter(pd => pd.x + pd.w > -100);
+  for (const p of powerups) { p.x -= dx; p.ph += dt * 3; }
+  powerups = powerups.filter(p => p.x > -80 && !p.taken);
+
+  // --- powerup timers ---
+  if (magnetT > 0) {
+    magnetT -= dt;
+    for (const o of orbs) {
+      if (o.taken) continue;
+      const mx = px - o.x, my = py - o.y;
+      const d = Math.hypot(mx, my);
+      if (d < 300 && d > 1) {
+        const pull = 900 * dt;
+        o.x += mx / d * pull;
+        o.y += my / d * pull;
+      }
+    }
+  }
+  if (surgeT > 0) surgeT -= dt;
+  if (invulnT > 0) invulnT -= dt;
+
+  // --- timed surge events: warning, then 10s of 2x chaos ---
+  if (eventSurgeT <= 0 && surgeWarnT <= 0 && elapsed >= nextSurgeAt) {
+    surgeWarnT = 3;
+    floater(W / 2, H * 0.3, 'SURGE INCOMING', '#ff4d6d');
+    SFX.warn();
+  }
+  if (surgeWarnT > 0) {
+    surgeWarnT -= dt;
+    if (surgeWarnT <= 0) {
+      eventSurgeT = 10;
+      floater(W / 2, H * 0.3, 'SURGE x2', '#ff4d6d');
+      SFX.power();
+      buzz([25, 25, 25]);
+    }
+  }
+  if (eventSurgeT > 0) {
+    eventSurgeT -= dt;
+    if (eventSurgeT <= 0) nextSurgeAt = elapsed + 45;
+  }
 
   // --- bounce pads: mid-air contact sends you back to your side ---
   if (state === 'playing' && !onSurface) checkPadCollision();
 
-  // --- collisions (forgiving hitboxes) ---
-  const pr = CFG.playerR - 3;
-  for (const ob of obstacles) {
-    const r = shrunkRect(ob);
-    if (px + pr > r.x && px - pr < r.x + r.w && py + pr > r.y && py - pr < r.y + r.h) {
-      die();
-      break;
+  // --- powerup collection ---
+  for (const p of powerups) {
+    if (p.taken) continue;
+    const dxp = p.x - px, dyp = p.y - py;
+    if (dxp * dxp + dyp * dyp < (p.r + 17) * (p.r + 17)) collectPowerup(p);
+  }
+
+  // --- collisions (forgiving hitboxes; shield & brief invulnerability can save you) ---
+  if (invulnT <= 0) {
+    const pr = CFG.playerR - 3;
+    for (let i = 0; i < obstacles.length; i++) {
+      const ob = obstacles[i];
+      const r = shrunkRect(ob);
+      if (px + pr > r.x && px - pr < r.x + r.w && py + pr > r.y && py - pr < r.y + r.h) {
+        if (shield) { smashShield(ob, i); i--; }
+        else { die(); return; }
+      }
     }
   }
 
@@ -703,7 +855,7 @@ function update(dt) {
   }
 
   // --- score: survive = points ---
-  score += speed * dt * 0.02;
+  score += speed * dt * 0.02 * scoreMult();
   setScore(score);
   tickTimer();
 }
@@ -904,6 +1056,8 @@ function drawPlayer(t) {
   }
   ctx.globalAlpha = 1;
   if (state === 'dying') return; // exploded
+  // invulnerability blink after a shield save
+  if (invulnT > 0 && Math.floor(t * 14) % 2 === 0) ctx.globalAlpha = 0.35;
   // glow core
   ctx.save();
   ctx.shadowColor = color;
@@ -921,7 +1075,58 @@ function drawPlayer(t) {
   ctx.beginPath();
   ctx.arc(px + Math.cos(a) * (CFG.playerR + 7), py + Math.sin(a) * (CFG.playerR + 7), 3, 0, 6.2832);
   ctx.fill();
+  // shield ring
+  if (shield) {
+    ctx.shadowColor = '#7df9ff';
+    ctx.shadowBlur = 12;
+    ctx.strokeStyle = 'rgba(125,249,255,0.9)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(px, py, CFG.playerR + 12, 0, 6.2832); ctx.stroke();
+  }
   ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+function drawPowerups(t) {
+  const colors = { shield: '#7df9ff', magnet: '#ff5e7a', overdrive: '#ff9d2e' };
+  for (const p of powerups) {
+    const bob = Math.sin(t * 3 + p.ph) * 6;
+    const y = p.y + bob;
+    const c = colors[p.kind] || '#fff';
+    ctx.save();
+    ctx.shadowColor = c;
+    ctx.shadowBlur = 18;
+    // halo
+    ctx.strokeStyle = c;
+    ctx.globalAlpha = 0.85;
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(p.x, y, p.r, 0, 6.2832); ctx.stroke();
+    // icon
+    ctx.fillStyle = c;
+    ctx.strokeStyle = c;
+    if (p.kind === 'shield') {
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(p.x, y, p.r * 0.55, 0, 6.2832); ctx.stroke();
+      ctx.beginPath(); ctx.arc(p.x, y, 3.5, 0, 6.2832); ctx.fill();
+    } else if (p.kind === 'magnet') {
+      ctx.lineWidth = 6;
+      ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(p.x, y - 2, 8, Math.PI * 0.1, Math.PI * 0.9, false); ctx.stroke();
+      ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.moveTo(p.x - 8, y - 2); ctx.lineTo(p.x - 8, y + 7); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(p.x + 8, y - 2); ctx.lineTo(p.x + 8, y + 7); ctx.stroke();
+    } else { // overdrive: lightning bolt
+      ctx.beginPath();
+      ctx.moveTo(p.x + 3, y - 11);
+      ctx.lineTo(p.x - 6, y + 2);
+      ctx.lineTo(p.x - 1, y + 2);
+      ctx.lineTo(p.x - 3, y + 11);
+      ctx.lineTo(p.x + 6, y - 2);
+      ctx.lineTo(p.x + 1, y - 2);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
 }
 
 function drawPads(t) {
@@ -1035,6 +1240,7 @@ function render(t) {
   drawSpeedLines();
   drawRails();
   drawOrbs(t);
+  drawPowerups(t);
   drawObstacles(t);
   drawPads(t);
   drawFx();
@@ -1078,10 +1284,40 @@ window.__gd = {
   get mult() { return mult; },
   get combo() { return combo; },
   get slowmo() { return slowmoT; },
+  get shield() { return shield; },
+  get magnetT() { return magnetT; },
+  get surgeT() { return surgeT; },
+  get eventSurgeT() { return eventSurgeT; },
+  get surgeWarnT() { return surgeWarnT; },
   get obstacles() {
     return obstacles.map(o => ({ x: o.x, y: o.y, w: o.w, h: o.h, kind: o.kind, tag: o.tag || null }));
   },
 };
+
+// ---------- Career stats & play streak (persistent) ----------
+function fmtDur(s) {
+  s = Math.floor(s);
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+function renderCareer() {
+  const el = $('career-line');
+  if (el) el.textContent = career.runs + ' RUNS · ' + career.flips + ' FLIPS · ' +
+    fmtDur(career.time) + ' AIR TIME · BEST x' + career.bestMult;
+}
+function bumpStreak() {
+  const today = new Date().toDateString();
+  let st = { count: 0, last: '' };
+  try { st = Object.assign(st, JSON.parse(store.get('gd_streak') || '{}')); } catch (e) {}
+  if (st.last !== today) {
+    const yest = new Date(Date.now() - 864e5).toDateString();
+    st.count = (st.last === yest) ? st.count + 1 : 1;
+    st.last = today;
+    store.set('gd_streak', JSON.stringify(st));
+  }
+  const el = $('streak-line');
+  if (el) el.textContent = 'STREAK ' + st.count + (st.count === 1 ? ' DAY' : ' DAYS');
+  return st.count;
+}
 
 // ---------- Boot ----------
 muteBtn.textContent = muted ? 'SOUND OFF' : 'SOUND ON';
@@ -1090,6 +1326,8 @@ resize();
 renderPips();
 refreshBest();
 updateAchLine();
+renderCareer();
+bumpStreak();
 setScore(0);
 requestAnimationFrame(loop);
 
