@@ -64,6 +64,7 @@ const SFX = {
   click: () => beep(640, 0.06, 'sine', 0.07),
   boing: () => beep(430, 0.16, 'triangle', 0.12, 150),
   power: () => beep(700, 0.12, 'square', 0.07, 1500),
+  explosion: () => { beep(90, 0.4, 'sawtooth', 0.14, 40); setTimeout(() => beep(60, 0.5, 'sawtooth', 0.12, 30), 60); },
   warn: () => { beep(300, 0.15, 'square', 0.09, 180); setTimeout(() => beep(300, 0.15, 'square', 0.09, 180), 200); },
   fanfare: () => {
     beep(523, 0.12, 'triangle', 0.10);
@@ -115,7 +116,7 @@ let score = 0, elapsed = 0, speed = CFG.baseSpeed;
 let flips = 0, orbsGot = 0, nearCount = 0;
 let best = parseInt(store.get('gd_best') || '0', 10) || 0;
 let shake = 0, deathT = 0, denyFlash = 0;
-let obstacles = [], orbs = [], pads = [], powerups = [], particles = [], floaters = [], trail = [], waves = [];
+let obstacles = [], orbs = [], pads = [], powerups = [], particles = [], floaters = [], trail = [], waves = [], meteors = [];
 let spawnX = 0, consecCost = 0, railOff = 0;
 let stars = [];
 // retention systems: combo, ghost pace, achievements, juice
@@ -230,6 +231,61 @@ function collectPowerup(p) {
   waves.push({ x: p.x, y: p.y, r: 8, life: 0.8 });
 }
 
+function detonateOrb(o) {
+  o.taken = true;
+  detonate(o.x, o.y);
+  unlockAch('volatile');
+}
+
+function detonate(x, y) {
+  // volatile orb goes off: vaporize every obstacle in the blast radius
+  const R = surgeT > 0 ? 200 : 150;
+  let kills = 0;
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    const ob = obstacles[i];
+    const cx = clamp(x, ob.x, ob.x + ob.w), cy = clamp(y, ob.y, ob.y + ob.h);
+    const dx = x - cx, dy = y - cy;
+    if (dx * dx + dy * dy < R * R) {
+      for (let k = 0; k < 10; k++) {
+        particles.push({
+          x: ob.x + ob.w / 2, y: ob.y + ob.h / 2,
+          vx: rand(-300, 300), vy: rand(-300, 300),
+          life: rand(0.3, 0.7), max: 0.7, size: rand(2, 6),
+          color: ['#ff7a2e', '#ffd94d', '#ff4d2e'][k % 3],
+        });
+      }
+      obstacles.splice(i, 1);
+      kills++;
+    }
+  }
+  waves.push({ x, y, r: 14, life: 1 });
+  waves.push({ x, y, r: 6, life: 1 });
+  for (let k = 0; k < 24; k++) {
+    const a = Math.random() * 6.2832, sp = rand(120, 420);
+    particles.push({
+      x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      life: rand(0.35, 0.8), max: 0.8, size: rand(2, 7),
+      color: ['#ff7a2e', '#ffd94d', '#ffffff', '#ff4d2e'][k % 4],
+    });
+  }
+  shake = Math.max(shake, 12);
+  flash = Math.max(flash, 0.22);
+  SFX.explosion();
+  buzz([50, 30, 50]);
+  feedCombo();
+  if (kills > 0) {
+    const pts = 25 * kills * scoreMult();
+    score += pts;
+    setScore(score);
+    const label = kills === 1 ? 'DEMOLISHED +' + pts :
+      kills === 2 ? 'DOUBLE KILL +' + pts :
+      kills === 3 ? 'TRIPLE KILL +' + pts : 'RAMPAGE x' + kills + ' +' + pts;
+    floater(x, y - 54, label, '#ff7a2e');
+  } else {
+    floater(x, y - 54, 'BOOM', '#ff7a2e');
+  }
+}
+
 function smashShield(ob, i) {
   // shield absorbs a lethal hit: the obstacle shatters instead of you
   shield = false;
@@ -266,6 +322,7 @@ const ACHS = [
   { id: 'score500',   label: 'Score 500' },
   { id: 'score1000',  label: 'Score 1000' },
   { id: 'powerup',    label: 'Grab a powerup' },
+  { id: 'volatile',   label: 'Detonate a volatile orb' },
 ];
 let ach = {};
 try { ach = JSON.parse(store.get('gd_ach') || '{}') || {}; } catch (e) { ach = {}; }
@@ -453,6 +510,16 @@ function patPowerup(x) {
   });
   return 230;
 }
+function patVolatile(x) {
+  // a gate with a volatile orb floating in its window: thread the gate,
+  // grab the orb, and vaporize the whole thing — or just thread it normal
+  addGate(x);
+  orbs.push({
+    x: x + 60, y: (floorY + ceilY) / 2, r: 13,
+    taken: false, ph: Math.random() * 6.28, volatile: true,
+  });
+  consecCost++; return 290;
+}
 function patOrbArc(x) {
   const from = playerSurf(), y0 = surfY(from), y1 = surfY(oppSurf());
   const dir0 = from === 'floor' ? -1 : 1, dir1 = -dir0;
@@ -478,16 +545,17 @@ function choosePattern(x) {
     if (r < 0.78) return patOrbLine(x);
     return patRest();
   }
-  if (r < 0.21) return patMustSpike(x);
-  if (r < 0.35) return patFreeSpike(x);
-  if (r < 0.44) return patWall(x);
-  if (r < 0.51 && elapsed > 15) return patDouble(x);
-  if (r < 0.60 && elapsed > 20) return patGate(x);
-  if (r < 0.69 && elapsed > 30) return patStairs(x);
-  if (r < 0.76 && elapsed > 40) return patDrifter(x);
-  if (r < 0.84 && elapsed > 15) return patHop(x);
-  if (r < 0.90 && elapsed > 25) return patPowerup(x);
-  if (r < 0.98) return patOrbArc(x);
+  if (r < 0.20) return patMustSpike(x);
+  if (r < 0.34) return patFreeSpike(x);
+  if (r < 0.43) return patWall(x);
+  if (r < 0.50 && elapsed > 15) return patDouble(x);
+  if (r < 0.59 && elapsed > 20) return patGate(x);
+  if (r < 0.68 && elapsed > 30) return patStairs(x);
+  if (r < 0.75 && elapsed > 40) return patDrifter(x);
+  if (r < 0.83 && elapsed > 15) return patHop(x);
+  if (r < 0.89 && elapsed > 25) return patPowerup(x);
+  if (r < 0.94 && elapsed > 35) return patVolatile(x);
+  if (r < 0.99) return patOrbArc(x);
   return patRest();
 }
 
@@ -500,7 +568,7 @@ function startGame() {
   score = 0; elapsed = 0; speed = CFG.baseSpeed;
   flips = 0; orbsGot = 0; nearCount = 0;
   shake = 0; denyFlash = 0;
-  obstacles = []; orbs = []; pads = []; powerups = []; particles = []; floaters = []; trail = []; waves = [];
+  obstacles = []; orbs = []; pads = []; powerups = []; particles = []; floaters = []; trail = []; waves = []; meteors = [];
   spawnX = W + 420; consecCost = 0;
   state = 'playing'; paused = false;
   menu.classList.add('hidden');
@@ -650,6 +718,19 @@ function showGameOver() {
   }
   career.time += elapsed;
   store.set('gd_career', JSON.stringify(career));
+  if (isBest) {
+    // new best? confetti eruption.
+    for (let i = 0; i < 90; i++) {
+      particles.push({
+        x: rand(0, W), y: rand(-40, H * 0.3),
+        vx: rand(-60, 60), vy: rand(40, 220),
+        life: rand(1.2, 2.4), max: 2.4, size: rand(4, 8),
+        color: ['#00e5ff', '#ff4dd2', '#ffd94d', '#7dff9a', '#ff9d2e'][i % 5],
+        confetti: true,
+      });
+    }
+    SFX.fanfare();
+  }
   $('final-score').textContent = fs;
   $('newbest').classList.toggle('hidden', !isBest);
   $('st-time').textContent = Math.floor(elapsed) + 's';
@@ -703,6 +784,17 @@ function buildStars() {
 }
 
 // ---------- Update ----------
+function updateFx(dt) {
+  for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.confetti ? 260 : 500) * dt; p.life -= dt; }
+  particles = particles.filter(p => p.life > 0);
+  for (const f of floaters) { f.y -= 46 * dt; f.life -= dt * 1.4; }
+  floaters = floaters.filter(f => f.life > 0);
+  for (const wv of waves) { wv.r += 420 * dt; wv.life -= dt * 2.4; }
+  waves = waves.filter(w => w.life > 0);
+  for (const m of meteors) { m.x += m.vx * dt; m.y += m.vy * dt; m.life -= dt; }
+  meteors = meteors.filter(m => m.life > 0 && m.x > -200 && m.y < H + 200);
+}
+
 function update(dt) {
   elapsed += dt;
   speed = Math.min(CFG.maxSpeed, CFG.baseSpeed + elapsed * CFG.speedRamp);
@@ -763,7 +855,10 @@ function update(dt) {
     o.x -= dx; o.ph += dt * 5;
     if (!o.taken) {
       const d = Math.hypot(px - o.x, py - o.y);
-      if (d < CFG.playerR + o.r + 6) collectOrb(o);
+      if (d < CFG.playerR + o.r + 6) {
+        if (o.volatile) detonateOrb(o);
+        else collectOrb(o);
+      }
     }
   }
   obstacles = obstacles.filter(o => o.x + o.w > -120 && !(o.counted && o.x + o.w < -40));
@@ -808,6 +903,13 @@ function update(dt) {
   if (eventSurgeT > 0) {
     eventSurgeT -= dt;
     if (eventSurgeT <= 0) nextSurgeAt = elapsed + 45;
+    // meteor shower while the surge rages
+    if (meteors.length < 12 && Math.random() < dt * 5) {
+      meteors.push({
+        x: rand(W * 0.3, W + 200), y: rand(-40, H * 0.35),
+        vx: rand(-950, -650), vy: rand(280, 480), life: 1.6,
+      });
+    }
   }
 
   // --- bounce pads: mid-air contact sends you back to your side ---
@@ -834,12 +936,7 @@ function update(dt) {
   }
 
   // --- fx ---
-  for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 500 * dt; p.life -= dt; }
-  particles = particles.filter(p => p.life > 0);
-  for (const f of floaters) { f.y -= 46 * dt; f.life -= dt * 1.4; }
-  floaters = floaters.filter(f => f.life > 0);
-  for (const wv of waves) { wv.r += 420 * dt; wv.life -= dt * 2.4; }
-  waves = waves.filter(w => w.life > 0);
+  updateFx(dt);
 
   // --- combo decay ---
   if (comboT > 0) {
@@ -863,10 +960,7 @@ function update(dt) {
 function updateDying(dt) {
   deathT += dt;
   shake = Math.max(0, shake - dt * 22);
-  for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 500 * dt; p.life -= dt; }
-  particles = particles.filter(p => p.life > 0);
-  for (const wv of waves) { wv.r += 420 * dt; wv.life -= dt * 2.4; }
-  waves = waves.filter(w => w.life > 0);
+  updateFx(dt);
   if (deathT > 0.85) showGameOver();
 }
 
@@ -901,6 +995,24 @@ function drawBackground(t) {
     ctx.fillRect(sx, s.y, s.size, s.size);
   }
   ctx.globalAlpha = 1;
+  // meteors streak by while a surge rages
+  for (const m of meteors) {
+    const a = Math.min(1, m.life);
+    ctx.save();
+    ctx.globalAlpha = 0.7 * a;
+    ctx.strokeStyle = '#cfe9ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(m.x, m.y);
+    ctx.lineTo(m.x - m.vx * 0.12, m.y - m.vy * 0.12);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = '#9fdcff';
+    ctx.shadowBlur = 10;
+    ctx.beginPath(); ctx.arc(m.x, m.y, 2.5, 0, 6.2832); ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
 }
 
 function drawRails() {
@@ -932,14 +1044,30 @@ function drawOrbs(t) {
   for (const o of orbs) {
     const pulse = 1 + 0.16 * Math.sin(o.ph);
     ctx.save();
-    ctx.shadowColor = '#ffd94d';
-    ctx.shadowBlur = 18;
-    const g = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, o.r * pulse);
-    g.addColorStop(0, '#fff6d8');
-    g.addColorStop(0.55, '#ffd94d');
-    g.addColorStop(1, 'rgba(255,157,46,0.15)');
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(o.x, o.y, o.r * pulse, 0, 6.2832); ctx.fill();
+    if (o.volatile) {
+      // volatile: angry red-gold with a warning ring
+      ctx.shadowColor = '#ff4d2e';
+      ctx.shadowBlur = 22;
+      const g = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, o.r * pulse);
+      g.addColorStop(0, '#fff0d8');
+      g.addColorStop(0.55, '#ff7a2e');
+      g.addColorStop(1, 'rgba(255,77,46,0.15)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(o.x, o.y, o.r * pulse, 0, 6.2832); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255,77,46,' + (0.5 + 0.4 * Math.sin(o.ph * 2)).toFixed(3) + ')';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(o.x, o.y, o.r * pulse + 7, 0, 6.2832); ctx.stroke();
+    } else {
+      ctx.shadowColor = '#ffd94d';
+      ctx.shadowBlur = 18;
+      const g = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, o.r * pulse);
+      g.addColorStop(0, '#fff6d8');
+      g.addColorStop(0.55, '#ffd94d');
+      g.addColorStop(1, 'rgba(255,157,46,0.15)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(o.x, o.y, o.r * pulse, 0, 6.2832); ctx.fill();
+    }
     ctx.restore();
   }
 }
@@ -1162,9 +1290,20 @@ function drawPads(t) {
 
 function drawFx() {
   for (const p of particles) {
-    ctx.globalAlpha = Math.max(0, p.life / p.max);
-    ctx.fillStyle = p.color;
-    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    const a = Math.max(0, p.life / p.max);
+    if (p.confetti) {
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.translate(p.x, p.y);
+      ctx.rotate((p.max - p.life) * 7 + p.x);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+      ctx.restore();
+    } else {
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    }
   }
   ctx.globalAlpha = 1;
   for (const wv of waves) {
@@ -1269,6 +1408,7 @@ function loop(now) {
   flash = Math.max(0, flash - rawDt * 2.4);
   if (state === 'playing') update(dt);
   else if (state === 'dying') updateDying(dt);
+  else if (state === 'over') updateFx(dt); // confetti keeps falling on the game-over screen
   render(now / 1000);
 }
 
