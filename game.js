@@ -33,6 +33,45 @@ const store = {
   set(k, v) { try { window.localStorage.setItem(k, v); } catch (e) { /* ignore */ } },
 };
 
+// ---------- Challenge modes ----------
+const MODES = {
+  classic:  { label: 'CLASSIC',  energyMax: 5, accel: 9,  maxSpeed: 1000, orbScore: 5 },
+  marathon: { label: 'MARATHON', energyMax: 4, accel: 14, maxSpeed: 1150, orbScore: 5 },
+  greed:    { label: 'GREED',    energyMax: 6, accel: 9,  maxSpeed: 1000, orbScore: 10 },
+};
+let mode = store.get('gd_mode') || 'classic';
+if (!MODES[mode]) mode = 'classic';
+
+// ---------- Unlockable themes (background + rails + player palette) ----------
+const THEMES = [
+  { id: 'neon',   name: 'NEON NIGHTS',  need: 0,  bg: ['#0b0b1a', '#07070f', '#0d0a18'], floor: '#00e5ff', ceil: '#ff2ec4', down: '#00e5ff', up: '#ff4dd2' },
+  { id: 'sunset', name: 'SUNSET STRIP', need: 4,  bg: ['#1c0b16', '#100710', '#1c0d14'], floor: '#ff9d2e', ceil: '#ff4d6d', down: '#ffb84d', up: '#ff6b9d' },
+  { id: 'abyss',  name: 'ABYSS',        need: 8,  bg: ['#02070f', '#010409', '#031018'], floor: '#2eff9d', ceil: '#2e9dff', down: '#2eff9d', up: '#2e9dff' },
+  { id: 'ghost',  name: 'GHOST',        need: 12, bg: ['#101014', '#0a0a0c', '#15151b'], floor: '#e8e8f0', ceil: '#b0b0c0', down: '#ffffff', up: '#a8a8b8' },
+];
+let themeIdx = 0;
+try { themeIdx = parseInt(store.get('gd_theme') || '0', 10) || 0; } catch (e) {}
+if (themeIdx < 0 || themeIdx >= THEMES.length) themeIdx = 0;
+function themeUnlocked(i) { return Object.keys(ach).length >= THEMES[i].need; }
+function theme() { return themeUnlocked(themeIdx) ? THEMES[themeIdx] : THEMES[0]; }
+function renderTheme() {
+  const el = $('theme-name');
+  if (!el) return;
+  const th = THEMES[themeIdx];
+  el.textContent = themeUnlocked(themeIdx) ? th.name : th.name + ' · ' + th.need + ' TROPHIES';
+}
+function cycleTheme(d) {
+  themeIdx = (themeIdx + d + THEMES.length) % THEMES.length;
+  if (themeUnlocked(themeIdx)) {
+    store.set('gd_theme', String(themeIdx));
+    SFX.click();
+  } else {
+    SFX.deny();
+  }
+  renderTheme();
+}
+
+
 // ---------- Audio (procedural, no assets) ----------
 let AC = null;
 let muted = store.get('gd_mute') === '1';
@@ -114,7 +153,15 @@ let onSurface = true;
 let energy = CFG.energyStart;
 let score = 0, elapsed = 0, speed = CFG.baseSpeed;
 let flips = 0, orbsGot = 0, nearCount = 0;
-let best = parseInt(store.get('gd_best') || '0', 10) || 0;
+let best = 0, bestCurve = null;
+function bestKey() { return 'gd_best' + (mode === 'classic' ? '' : '_' + mode); }
+function curveKey() { return 'gd_bestcurve' + (mode === 'classic' ? '' : '_' + mode); }
+function loadBest() {
+  best = parseInt(store.get(bestKey()) || '0', 10) || 0;
+  try { bestCurve = JSON.parse(store.get(curveKey()) || 'null'); } catch (e) { bestCurve = null; }
+  if (!Array.isArray(bestCurve)) bestCurve = null;
+  refreshBest();
+}
 let shake = 0, deathT = 0, denyFlash = 0;
 let obstacles = [], orbs = [], pads = [], powerups = [], particles = [], floaters = [], trail = [], waves = [], meteors = [];
 let spawnX = 0, consecCost = 0, railOff = 0;
@@ -122,9 +169,6 @@ let stars = [];
 // retention systems: combo, ghost pace, achievements, juice
 let combo = 0, comboT = 0, mult = 1;
 let runCurve = [], lastCurveSample = 0, bouncesThisRun = 0;
-let bestCurve = null;
-try { bestCurve = JSON.parse(store.get('gd_bestcurve') || 'null'); } catch (e) { bestCurve = null; }
-if (!Array.isArray(bestCurve)) bestCurve = null;
 let slowmoT = 0, freezeT = 0, flash = 0;
 // powerups & surge events
 let shield = false, magnetT = 0, surgeT = 0, invulnT = 0;
@@ -366,6 +410,17 @@ function renderCombo() {
   }
 }
 
+// ---------- PERFECT precision bonuses ----------
+function perfectBonus(label) {
+  feedCombo();
+  const pts = 25 * mult * scoreMult();
+  score += pts;
+  setScore(score);
+  floater(px, py - 70, 'PERFECT ' + label + ' +' + pts, '#ffd94d');
+  SFX.power();
+  buzz([20, 20, 20]);
+}
+
 // ---------- Ghost pace: live ahead/behind vs your best run ----------
 function bestScoreAt(t) {
   if (!bestCurve || !bestCurve.length) return null;
@@ -387,8 +442,27 @@ function onPress(e) {
   // 'dying' / 'over' handled by overlay buttons
 }
 canvas.addEventListener('pointerdown', onPress);
-menu.addEventListener('pointerdown', e => { e.preventDefault(); SFX.click(); startGame(); });
-$('start-btn').addEventListener('click', e => e.stopPropagation());
+menu.addEventListener('pointerdown', e => {
+  // tap-anywhere to start, but let the buttons handle their own taps
+  if (e.target.closest && e.target.closest('button')) return;
+  e.preventDefault(); SFX.click(); startGame();
+});
+$('start-btn').addEventListener('click', e => { e.stopPropagation(); startGame(); });
+document.querySelectorAll('#mode-row .sel-btn').forEach(b => {
+  b.addEventListener('click', e => { e.stopPropagation(); setMode(b.dataset.mode); });
+});
+$('theme-prev').addEventListener('click', e => { e.stopPropagation(); cycleTheme(-1); });
+$('theme-next').addEventListener('click', e => { e.stopPropagation(); cycleTheme(1); });
+function setMode(m) {
+  if (!MODES[m]) return;
+  if (m !== mode) {
+    mode = m;
+    store.set('gd_mode', m);
+    SFX.click();
+  }
+  loadBest();
+  document.querySelectorAll('#mode-row .sel-btn').forEach(b => b.classList.toggle('sel', b.dataset.mode === mode));
+}
 gameoverEl.addEventListener('pointerdown', e => {
   // tap-anywhere to retry, but let the buttons handle their own taps —
   // otherwise SHARE would restart the game before its click fires
@@ -457,7 +531,7 @@ function addGate(x) {
   // mid-air. Window sized so the pass is always possible: the mid-gap
   // flight window (~0.22s) must exceed the gate crossing time.
   const wh = Math.round(gapH * 0.22), w = 48;
-  obstacles.push({ kind: 'gate', x, y: floorY - wh, w, h: wh, minClear: Infinity, counted: false });
+  obstacles.push({ kind: 'gate', x, y: floorY - wh, w, h: wh, minClear: Infinity, counted: false, gateTop: true });
   obstacles.push({ kind: 'gate', x, y: ceilY, w, h: wh, minClear: Infinity, counted: false });
 }
 function addDrifter(x) {
@@ -475,8 +549,18 @@ function addPad(x, y) {
 function gapAfter() { return speed * rand(0.50, 0.80); } // time-based spacing
 
 // pattern fns: each takes x, emits entities, returns footprint width
-function patMustSpike(x)   { addSpike(x, playerSurf()); consecCost++; return 120; }
-function patFreeSpike(x)   { addSpike(x, oppSurf()); consecCost = 0; return 120; }
+function patMustSpike(x) {
+  const s = playerSurf();
+  addSpike(x, s);
+  if (mode === 'greed' && Math.random() < 0.6) addSpike(x + 130, s); // greed: denser
+  consecCost++; return 120;
+}
+function patFreeSpike(x) {
+  const s = oppSurf();
+  addSpike(x, s);
+  if (mode === 'greed' && Math.random() < 0.6) addSpike(x + 130, s); // greed: denser
+  consecCost = 0; return 120;
+}
 function patWall(x)        { addWall(x, playerSurf()); consecCost++; return 150; }
 function patDouble(x)      { addSpike(x, 'floor'); addSpike(x, 'ceil'); consecCost++; return 140; }
 function patGate(x)        { addGate(x); consecCost++; return 170; }
@@ -520,6 +604,16 @@ function patVolatile(x) {
   });
   consecCost++; return 290;
 }
+function addPiston(x, rail) {
+  obstacles.push({ kind: 'piston', x, w: 34, rail, ext: 0, h: 0, y: 0, minClear: Infinity, counted: false, tag: 'must' });
+}
+function patPiston(x) {
+  // piston spikes slide out of your rail with a warning shimmer — read it and flip
+  const s = playerSurf();
+  addPiston(x + 90, s);
+  if (Math.random() < 0.5) addPiston(x + 260, s);
+  consecCost++; return 320;
+}
 function patOrbArc(x) {
   const from = playerSurf(), y0 = surfY(from), y1 = surfY(oppSurf());
   const dir0 = from === 'floor' ? -1 : 1, dir1 = -dir0;
@@ -545,16 +639,17 @@ function choosePattern(x) {
     if (r < 0.78) return patOrbLine(x);
     return patRest();
   }
-  if (r < 0.20) return patMustSpike(x);
-  if (r < 0.34) return patFreeSpike(x);
-  if (r < 0.43) return patWall(x);
-  if (r < 0.50 && elapsed > 15) return patDouble(x);
-  if (r < 0.59 && elapsed > 20) return patGate(x);
-  if (r < 0.68 && elapsed > 30) return patStairs(x);
-  if (r < 0.75 && elapsed > 40) return patDrifter(x);
-  if (r < 0.83 && elapsed > 15) return patHop(x);
-  if (r < 0.89 && elapsed > 25) return patPowerup(x);
-  if (r < 0.94 && elapsed > 35) return patVolatile(x);
+  if (r < 0.18) return patMustSpike(x);
+  if (r < 0.31) return patFreeSpike(x);
+  if (r < 0.39) return patWall(x);
+  if (r < 0.46 && elapsed > 15) return patDouble(x);
+  if (r < 0.55 && elapsed > 20) return patGate(x);
+  if (r < 0.63 && elapsed > 30) return patStairs(x);
+  if (r < 0.70 && elapsed > 40) return patDrifter(x);
+  if (r < 0.78 && elapsed > 15) return patHop(x);
+  if (r < 0.84 && elapsed > 25) return patPowerup(x);
+  if (r < 0.89 && elapsed > 35) return patVolatile(x);
+  if (r < 0.95 && elapsed > 50) return patPiston(x);
   if (r < 0.99) return patOrbArc(x);
   return patRest();
 }
@@ -562,9 +657,13 @@ function choosePattern(x) {
 // ---------- Game flow ----------
 function startGame() {
   SFX.click();
+  // apply the selected challenge mode
+  const M = MODES[mode];
+  CFG.energyMax = M.energyMax; CFG.accel = M.accel;
+  CFG.maxSpeed = M.maxSpeed; CFG.orbScore = M.orbScore;
   grav = 1; px = Math.max(90, W * 0.30); py = floorY - CFG.playerR; vy = 0;
   onSurface = true;
-  energy = CFG.energyStart;
+  energy = Math.min(CFG.energyStart, CFG.energyMax);
   score = 0; elapsed = 0; speed = CFG.baseSpeed;
   flips = 0; orbsGot = 0; nearCount = 0;
   shake = 0; denyFlash = 0;
@@ -658,10 +757,12 @@ function bouncePad(pd) {
   vy = flipFrom * CFG.flipLaunch;
   onSurface = false;
   feedCombo();
-  const pts = 5 * mult * scoreMult();
+  const isPerfect = Math.abs(px - (pd.x + pd.w / 2)) < 16;
+  const pts = (isPerfect ? 25 : 5) * mult * scoreMult();
   score += pts;
   setScore(score);
-  floater(px, py - 42, 'BOUNCE +' + pts, '#7dff9a');
+  floater(px, py - 42, (isPerfect ? 'PERFECT BOUNCE +' : 'BOUNCE +') + pts, isPerfect ? '#ffd94d' : '#7dff9a');
+  if (isPerfect) { SFX.power(); buzz([20, 20, 20]); }
   bouncesThisRun++;
   if (bouncesThisRun >= 5) unlockAch('bounce5');
   waves.push({ x: px, y: py, r: CFG.playerR, life: 1 });
@@ -712,12 +813,25 @@ function showGameOver() {
   const isBest = fs > best;
   if (isBest) {
     best = fs;
-    store.set('gd_best', String(best));
+    store.set(bestKey(), String(best));
     bestCurve = runCurve.slice(); // ghost for future runs to chase
-    store.set('gd_bestcurve', JSON.stringify(bestCurve));
+    store.set(curveKey(), JSON.stringify(bestCurve));
   }
   career.time += elapsed;
   store.set('gd_career', JSON.stringify(career));
+  // run history: last 5 runs, newest first
+  let runs = [];
+  try { runs = JSON.parse(store.get('gd_runs') || '[]'); } catch (e) { runs = []; }
+  if (!Array.isArray(runs)) runs = [];
+  runs.unshift({ s: fs, t: Math.floor(elapsed), m: mode });
+  runs = runs.slice(0, 5);
+  store.set('gd_runs', JSON.stringify(runs));
+  const rh = $('run-history');
+  if (rh) {
+    rh.innerHTML = '<div class="rh-title">RECENT RUNS</div>' + runs.map((r, i) =>
+      '<div class="rh-row' + (i === 0 ? ' rh-new' : '') + '"><span>' + r.s +
+      '</span><span>' + (MODES[r.m] ? MODES[r.m].label : 'CLASSIC') + ' · ' + fmtDur(r.t) + '</span></div>').join('');
+  }
   if (isBest) {
     // new best? confetti eruption.
     for (let i = 0; i < 90; i++) {
@@ -840,6 +954,15 @@ function update(dt) {
       // so you must read its swing and time your pass (or flip away)
       ob.y = midY - ob.h / 2 + Math.sin(elapsed * 3.1 + ob.ph) * gapH * 0.44;
     }
+    if (ob.kind === 'piston') {
+      // slide out of the rail as you approach, retract once passed
+      const target = (ob.x + ob.w > px - 20 && ob.x - px < 320) ? 1 : 0;
+      ob.ext += (target - ob.ext) * Math.min(1, dt * 7);
+      if (target === 0 && ob.ext < 0.02) ob.ext = 0;
+      ob.h = 54 * ob.ext;
+      ob.y = ob.rail === 'floor' ? floorY - ob.h : ceilY;
+      ob.warn = target === 1 && ob.ext < 0.9;
+    }
     // near-miss tracking: closest approach of the forgiving hitbox
     if (!ob.counted && px > ob.x - 90 && px < ob.x + ob.w + 90) {
       const d = circleRectDist(px, py, shrunkRect(ob));
@@ -847,7 +970,10 @@ function update(dt) {
     }
     if (!ob.counted && ob.x + ob.w < px - CFG.playerR * 2) {
       ob.counted = true;
-      if (ob.kind === 'gate') unlockAch('firstgate');
+      if (ob.kind === 'gate') {
+        unlockAch('firstgate');
+        if (ob.gateTop && Math.abs(py - midY) < 14) perfectBonus('GATE');
+      }
       if (ob.minClear < CFG.nearDist) nearMiss(ob);
     }
   }
@@ -966,10 +1092,11 @@ function updateDying(dt) {
 
 // ---------- Render ----------
 function drawBackground(t) {
+  const th = theme();
   const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, '#0b0b1a');
-  g.addColorStop(0.5, '#07070f');
-  g.addColorStop(1, '#0d0a18');
+  g.addColorStop(0, th.bg[0]);
+  g.addColorStop(0.5, th.bg[1]);
+  g.addColorStop(1, th.bg[2]);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 
@@ -1036,8 +1163,8 @@ function drawRails() {
     ctx.stroke();
     ctx.restore();
   };
-  drawRail(floorY, '#00e5ff');
-  drawRail(ceilY, '#ff2ec4');
+  drawRail(floorY, theme().floor);
+  drawRail(ceilY, theme().ceil);
 }
 
 function drawOrbs(t) {
@@ -1127,6 +1254,41 @@ function drawObstacles(t) {
       ctx.restore();
       continue;
     }
+    if (ob.kind === 'piston') {
+      const onFloor = ob.rail === 'floor';
+      // warning shimmer at the rail while extending
+      if (ob.warn) {
+        ctx.save();
+        ctx.globalAlpha = 0.35 + 0.3 * Math.sin(t * 14);
+        ctx.fillStyle = '#ff2e6d';
+        ctx.shadowColor = '#ff2e6d'; ctx.shadowBlur = 16;
+        if (onFloor) ctx.fillRect(ob.x - 8, floorY - 10, ob.w + 16, 10);
+        else ctx.fillRect(ob.x - 8, ceilY, ob.w + 16, 10);
+        ctx.restore();
+      }
+      if (ob.ext > 0.02) {
+        // spike triangle growing out of the rail
+        ctx.save();
+        ctx.shadowColor = '#ff2e6d';
+        ctx.shadowBlur = 12;
+        ctx.fillStyle = '#2a0a14';
+        ctx.strokeStyle = '#ff2e6d';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        if (onFloor) {
+          ctx.moveTo(ob.x, ob.y + ob.h);
+          ctx.lineTo(ob.x + ob.w / 2, ob.y);
+          ctx.lineTo(ob.x + ob.w, ob.y + ob.h);
+        } else {
+          ctx.moveTo(ob.x, ob.y);
+          ctx.lineTo(ob.x + ob.w / 2, ob.y + ob.h);
+          ctx.lineTo(ob.x + ob.w, ob.y);
+        }
+        ctx.closePath(); ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
+      continue;
+    }
     if (ob.kind === 'spike') {
       const onFloor = ob.y > H / 2;
       ctx.save();
@@ -1174,7 +1336,8 @@ function drawObstacles(t) {
 
 function drawPlayer(t) {
   if (state === 'menu') return; // player not placed yet
-  const color = grav === 1 ? '#00e5ff' : '#ff4dd2';
+  const th = theme();
+  const color = grav === 1 ? th.down : th.up;
   // trail
   for (const tr of trail) {
     if (tr.life <= 0) continue;
@@ -1464,10 +1627,12 @@ muteBtn.textContent = muted ? 'SOUND OFF' : 'SOUND ON';
 muteBtn.classList.toggle('off', muted);
 resize();
 renderPips();
-refreshBest();
+loadBest();
 updateAchLine();
 renderCareer();
 bumpStreak();
+renderTheme();
+document.querySelectorAll('#mode-row .sel-btn').forEach(b => b.classList.toggle('sel', b.dataset.mode === mode));
 setScore(0);
 requestAnimationFrame(loop);
 

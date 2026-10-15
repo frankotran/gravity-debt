@@ -33,6 +33,16 @@
   <div class="panel">
     <div class="title-glitch">GRAVITY<br>DEBT</div>
     <div class="tagline">every flip costs.</div>
+    <div class="select-row" id="mode-row">
+      <button class="sel-btn" data-mode="classic">CLASSIC</button>
+      <button class="sel-btn" data-mode="marathon">MARATHON</button>
+      <button class="sel-btn" data-mode="greed">GREED</button>
+    </div>
+    <div class="select-row">
+      <button id="theme-prev" class="sel-btn arrow" aria-label="previous theme">‹</button>
+      <span id="theme-name">NEON NIGHTS</span>
+      <button id="theme-next" class="sel-btn arrow" aria-label="next theme">›</button>
+    </div>
     <div class="howto">
       <div><span class="key">TAP</span> / <span class="key">SPACE</span> flip gravity</div>
       <div class="dim">Grab <span class="orb-word">orbs</span> to recharge &mdash; run dry and you're stuck.</div>
@@ -64,6 +74,7 @@
       <button id="retry-btn" class="btn">RETRY</button>
       <button id="share-btn" class="btn ghost">SHARE</button>
     </div>
+    <div id="run-history"></div>
     <div id="share-note" class="share-note hidden">score copied — go flex it</div>
   </div>
 </div>

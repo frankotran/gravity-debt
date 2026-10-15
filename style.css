@@ -125,6 +125,44 @@ html, body {
 }
 .best-line.dim { color: #6a6a85; margin-top: 8px; }
 
+.select-row {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px; margin-top: 14px;
+}
+.sel-btn {
+  font-family: 'Orbitron', monospace;
+  font-size: 11px; letter-spacing: 2px;
+  color: #8a8aa3; background: rgba(255, 255, 255, .05);
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 8px; padding: 8px 12px;
+  cursor: pointer;
+}
+.sel-btn.sel {
+  color: #0b0b1a; background: #00e5ff; border-color: #00e5ff;
+  box-shadow: 0 0 14px rgba(0, 229, 255, .5);
+  font-weight: 700;
+}
+.sel-btn.arrow { padding: 8px 14px; font-size: 14px; }
+#theme-name {
+  font-family: 'Orbitron', monospace;
+  font-size: 12px; letter-spacing: 2px;
+  color: #cfd2e8; min-width: 170px;
+}
+
+#run-history { margin-top: 14px; }
+.rh-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 10px; letter-spacing: 3px;
+  color: #6a6a85; margin-bottom: 6px;
+}
+.rh-row {
+  display: flex; justify-content: space-between;
+  font-family: 'Orbitron', monospace;
+  font-size: 12px; letter-spacing: 1px;
+  color: #8a8aa3; padding: 3px 12px;
+}
+.rh-row.rh-new { color: #ffd94d; }
+
 #timer {
   position: absolute;
   top: calc(max(10px, env(safe-area-inset-top)) + clamp(40px, 8.2vw, 62px));
