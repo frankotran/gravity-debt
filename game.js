@@ -63,6 +63,12 @@ const SFX = {
   deny:  () => beep(150, 0.16, 'square', 0.09, 85),
   click: () => beep(640, 0.06, 'sine', 0.07),
   boing: () => beep(430, 0.16, 'triangle', 0.12, 150),
+  power: () => beep(700, 0.12, 'square', 0.07, 1500),
+  fanfare: () => {
+    beep(523, 0.12, 'triangle', 0.10);
+    setTimeout(() => beep(659, 0.12, 'triangle', 0.10), 110);
+    setTimeout(() => beep(784, 0.22, 'triangle', 0.10), 220);
+  },
 };
 
 // ---------- Canvas ----------
@@ -107,12 +113,21 @@ let shake = 0, deathT = 0, denyFlash = 0;
 let obstacles = [], orbs = [], pads = [], particles = [], floaters = [], trail = [], waves = [];
 let spawnX = 0, consecCost = 0, railOff = 0;
 let stars = [];
+// retention systems: combo, ghost pace, achievements, juice
+let combo = 0, comboT = 0, mult = 1;
+let runCurve = [], lastCurveSample = 0, bouncesThisRun = 0;
+let bestCurve = null;
+try { bestCurve = JSON.parse(store.get('gd_bestcurve') || 'null'); } catch (e) { bestCurve = null; }
+if (!Array.isArray(bestCurve)) bestCurve = null;
+let slowmoT = 0, freezeT = 0, flash = 0;
 
 // ---------- DOM ----------
 const $ = id => document.getElementById(id);
 const hud = $('hud'), scoreEl = $('score'), pipsEl = $('energy-pips'),
       bestHud = $('best-hud'), menu = $('menu'), gameoverEl = $('gameover'),
-      pausedEl = $('paused'), muteBtn = $('mute-btn'), timerEl = $('timer');
+      pausedEl = $('paused'), muteBtn = $('mute-btn'), timerEl = $('timer'),
+      paceEl = $('pace'), comboEl = $('combo'), comboTxt = $('combo-txt'),
+      comboBar = $('combo-bar');
 
 function renderPips() {
   let html = '';
@@ -131,7 +146,24 @@ function fmtTime(s) {
 let lastTimerShown = '';
 function tickTimer() {
   const t = fmtTime(elapsed);
-  if (t !== lastTimerShown) { lastTimerShown = t; timerEl.textContent = t; }
+  if (t !== lastTimerShown) {
+    lastTimerShown = t; timerEl.textContent = t;
+    // ghost pace vs best run
+    const bs = bestScoreAt(elapsed);
+    if (bs !== null && elapsed > 2) {
+      const d = Math.floor(score) - bs;
+      paceEl.textContent = (d >= 0 ? '+' : '-') + Math.abs(d);
+      paceEl.className = d >= 0 ? 'ahead' : 'behind';
+      paceEl.style.display = 'block';
+    } else {
+      paceEl.style.display = 'none';
+    }
+    const fs = Math.floor(score);
+    if (fs >= 500) unlockAch('score500');
+    if (fs >= 1000) unlockAch('score1000');
+  }
+  if (elapsed >= 30) unlockAch('survive30');
+  if (elapsed >= 60) unlockAch('survive60');
 }
 function refreshBest() {
   bestHud.textContent = 'BEST ' + best;
@@ -139,6 +171,70 @@ function refreshBest() {
 }
 function floater(x, y, txt, color) {
   floaters.push({ x, y, txt, color: color || '#fff', life: 1 });
+}
+
+// ---------- Achievements (persistent) ----------
+const ACHS = [
+  { id: 'firstflip',  label: 'First flip' },
+  { id: 'firstgate',  label: 'Thread the gate' },
+  { id: 'combo3',     label: 'Combo x3' },
+  { id: 'combo5',     label: 'Combo x5' },
+  { id: 'survive30',  label: 'Survive 30s' },
+  { id: 'survive60',  label: 'Survive 60s' },
+  { id: 'bounce5',    label: '5 bounces, one run' },
+  { id: 'orb10',      label: '10 orbs, one run' },
+  { id: 'score500',   label: 'Score 500' },
+  { id: 'score1000',  label: 'Score 1000' },
+];
+let ach = {};
+try { ach = JSON.parse(store.get('gd_ach') || '{}') || {}; } catch (e) { ach = {}; }
+function updateAchLine() {
+  const el = $('ach-line');
+  if (el) el.textContent = 'TROPHIES ' + Object.keys(ach).length + '/' + ACHS.length;
+}
+function unlockAch(id) {
+  if (ach[id]) return;
+  ach[id] = true;
+  store.set('gd_ach', JSON.stringify(ach));
+  const def = ACHS.find(a => a.id === id);
+  floater(W / 2, H * 0.36, 'TROPHY: ' + (def ? def.label : id), '#ffd94d');
+  SFX.fanfare();
+  updateAchLine();
+}
+
+// ---------- Combo multiplier ----------
+function feedCombo() {
+  combo++;
+  comboT = 4.0;
+  const nm = 1 + Math.min(4, Math.floor(combo / 3));
+  if (nm > mult) {
+    mult = nm;
+    floater(px, py - 66, 'COMBO x' + mult, '#ff9d2e');
+    SFX.power();
+    if (mult === 3) unlockAch('combo3');
+    if (mult === 5) unlockAch('combo5');
+  }
+  renderCombo();
+}
+function renderCombo() {
+  if (mult > 1 && comboT > 0) {
+    comboEl.style.display = 'block';
+    comboTxt.textContent = 'COMBO x' + mult;
+    comboBar.style.width = Math.max(0, comboT / 4 * 100) + '%';
+  } else {
+    comboEl.style.display = 'none';
+  }
+}
+
+// ---------- Ghost pace: live ahead/behind vs your best run ----------
+function bestScoreAt(t) {
+  if (!bestCurve || !bestCurve.length) return null;
+  let s = 0;
+  for (let i = 0; i < bestCurve.length; i++) {
+    if (bestCurve[i][0] <= t) s = bestCurve[i][1];
+    else break;
+  }
+  return s;
 }
 
 // ---------- Input ----------
@@ -320,6 +416,10 @@ function startGame() {
   $('share-note').classList.add('hidden');
   renderPips(); setScore(0); refreshBest();
   lastTimerShown = ''; timerEl.textContent = '0:00';
+  paceEl.style.display = 'none';
+  combo = 0; comboT = 0; mult = 1; renderCombo();
+  runCurve = []; lastCurveSample = 0; bouncesThisRun = 0;
+  slowmoT = 0; freezeT = 0; flash = 0;
   lastT = performance.now();
   Music.start();
 }
@@ -337,6 +437,7 @@ function doFlip() {
   vy = grav * CFG.flipLaunch; // launch toward the new surface
   onSurface = false;
   flips++;
+  unlockAch('firstflip');
   shake = Math.max(shake, 3);
   waves.push({ x: px, y: py, r: CFG.playerR, life: 1 });
   for (let i = 0; i < 10; i++) {
@@ -355,25 +456,32 @@ function collectOrb(o) {
   o.taken = true;
   energy = Math.min(CFG.energyMax, energy + 1);
   orbsGot++;
-  score += CFG.orbScore;
+  feedCombo();
+  const pts = CFG.orbScore * mult;
+  score += pts;
   setScore(score);
-  floater(o.x, o.y - 18, '+' + CFG.orbScore, '#ffd94d');
+  floater(o.x, o.y - 18, '+' + pts, '#ffd94d');
+  waves.push({ x: o.x, y: o.y, r: 6, life: 0.7 }); // collect pulse
   for (let i = 0; i < 8; i++) {
     particles.push({
       x: o.x, y: o.y, vx: rand(-140, 140), vy: rand(-140, 140),
       life: rand(0.2, 0.45), max: 0.45, size: rand(2, 4), color: '#ffd94d',
     });
   }
+  if (orbsGot >= 10) unlockAch('orb10');
   SFX.orb();
   renderPips();
 }
 
 function nearMiss(ob) {
   nearCount++;
-  score += CFG.nearScore;
+  feedCombo();
+  const pts = CFG.nearScore * mult;
+  score += pts;
   setScore(score);
-  floater(px + 10, py - 40, 'CLOSE +' + CFG.nearScore, '#7dff9a');
+  floater(px + 10, py - 40, 'CLOSE +' + pts, '#7dff9a');
   SFX.near();
+  if (slowmoT < 0.15) slowmoT = 0.35; // brief slow-mo on close calls
 }
 
 function bouncePad(pd) {
@@ -381,9 +489,13 @@ function bouncePad(pd) {
   grav = flipFrom;
   vy = flipFrom * CFG.flipLaunch;
   onSurface = false;
-  score += 5;
+  feedCombo();
+  const pts = 5 * mult;
+  score += pts;
   setScore(score);
-  floater(px, py - 42, 'BOUNCE +5', '#7dff9a');
+  floater(px, py - 42, 'BOUNCE +' + pts, '#7dff9a');
+  bouncesThisRun++;
+  if (bouncesThisRun >= 5) unlockAch('bounce5');
   waves.push({ x: px, y: py, r: CFG.playerR, life: 1 });
   for (let i = 0; i < 12; i++) {
     particles.push({
@@ -410,22 +522,31 @@ function checkPadCollision() {
 function die() {
   if (state !== 'playing') return;
   state = 'dying'; deathT = 0;
-  shake = 16;
+  shake = 22;
+  freezeT = 0.12;  // freeze-frame beat before the explosion settles
+  flash = 0.55;    // white flash
   SFX.death();
-  for (let i = 0; i < 42; i++) {
+  for (let i = 0; i < 70; i++) {
     particles.push({
-      x: px, y: py, vx: rand(-340, 340), vy: rand(-340, 340),
-      life: rand(0.4, 0.9), max: 0.9, size: rand(2, 7),
-      color: ['#00e5ff', '#ff4dd2', '#ffffff'][i % 3],
+      x: px, y: py, vx: rand(-380, 380), vy: rand(-380, 380),
+      life: rand(0.4, 1.0), max: 1.0, size: rand(2, 8),
+      color: ['#00e5ff', '#ff4dd2', '#ffffff', '#ffd94d'][i % 4],
     });
   }
+  waves.push({ x: px, y: py, r: 10, life: 1 });
+  waves.push({ x: px, y: py, r: 4, life: 1 });
 }
 
 function showGameOver() {
   state = 'over';
   const fs = Math.floor(score);
   const isBest = fs > best;
-  if (isBest) { best = fs; store.set('gd_best', String(best)); }
+  if (isBest) {
+    best = fs;
+    store.set('gd_best', String(best));
+    bestCurve = runCurve.slice(); // ghost for future runs to chase
+    store.set('gd_bestcurve', JSON.stringify(bestCurve));
+  }
   $('final-score').textContent = fs;
   $('newbest').classList.toggle('hidden', !isBest);
   $('st-time').textContent = Math.floor(elapsed) + 's';
@@ -531,6 +652,7 @@ function update(dt) {
     }
     if (!ob.counted && ob.x + ob.w < px - CFG.playerR * 2) {
       ob.counted = true;
+      if (ob.kind === 'gate') unlockAch('firstgate');
       if (ob.minClear < CFG.nearDist) nearMiss(ob);
     }
   }
@@ -566,6 +688,19 @@ function update(dt) {
   floaters = floaters.filter(f => f.life > 0);
   for (const wv of waves) { wv.r += 420 * dt; wv.life -= dt * 2.4; }
   waves = waves.filter(w => w.life > 0);
+
+  // --- combo decay ---
+  if (comboT > 0) {
+    comboT -= dt;
+    if (comboT <= 0) { combo = 0; mult = 1; }
+    renderCombo();
+  }
+
+  // --- ghost curve sampling (for future pace comparisons) ---
+  if (elapsed - lastCurveSample >= 0.5) {
+    lastCurveSample = elapsed;
+    if (runCurve.length < 1200) runCurve.push([Math.round(elapsed * 10) / 10, Math.floor(score)]);
+  }
 
   // --- score: survive = points ---
   score += speed * dt * 0.02;
@@ -877,10 +1012,27 @@ function drawHint(t) {
   }
 }
 
+function drawSpeedLines() {
+  if (speed < 620 || state === 'menu') return;
+  const n = Math.min(14, Math.floor((speed - 620) / 28));
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.strokeStyle = '#9fdcff';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < n; i++) {
+    const y = Math.random() * H;
+    const x = Math.random() * W;
+    const len = 60 + Math.random() * 120;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + len, y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function render(t) {
   ctx.save();
   if (shake > 0) ctx.translate(rand(-shake, shake) * 0.6, rand(-shake, shake) * 0.6);
   drawBackground(t);
+  drawSpeedLines();
   drawRails();
   drawOrbs(t);
   drawObstacles(t);
@@ -889,6 +1041,10 @@ function render(t) {
   drawPlayer(t);
   drawHint(t);
   drawVignette(t);
+  if (flash > 0) {
+    ctx.fillStyle = 'rgba(255,255,255,' + flash.toFixed(3) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
   ctx.restore();
 }
 
@@ -900,7 +1056,11 @@ function loop(now) {
   lastT = now;
   if (dt > 0.05) dt = 0.05;   // clamp tab-switch jumps
   if (dt < 0) dt = 0;
+  const rawDt = dt;
   if (paused) { render(now / 1000); return; }
+  if (freezeT > 0) { freezeT -= rawDt; render(now / 1000); return; } // freeze-frame
+  if (slowmoT > 0) { slowmoT -= rawDt; dt *= 0.45; }                 // slow-mo juice
+  flash = Math.max(0, flash - rawDt * 2.4);
   if (state === 'playing') update(dt);
   else if (state === 'dying') updateDying(dt);
   render(now / 1000);
@@ -915,6 +1075,9 @@ window.__gd = {
   get onSurface() { return onSurface; },
   get px() { return px; },
   get speed() { return speed; },
+  get mult() { return mult; },
+  get combo() { return combo; },
+  get slowmo() { return slowmoT; },
   get obstacles() {
     return obstacles.map(o => ({ x: o.x, y: o.y, w: o.w, h: o.h, kind: o.kind, tag: o.tag || null }));
   },
@@ -926,6 +1089,7 @@ muteBtn.classList.toggle('off', muted);
 resize();
 renderPips();
 refreshBest();
+updateAchLine();
 setScore(0);
 requestAnimationFrame(loop);
 

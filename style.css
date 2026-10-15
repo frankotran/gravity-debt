@@ -76,6 +76,43 @@ html, body {
   color: #8a8aa3;
 }
 
+#pace {
+  position: absolute;
+  top: calc(max(10px, env(safe-area-inset-top)) + clamp(62px, 12.5vw, 94px));
+  left: 0; right: 0;
+  text-align: center;
+  font-family: 'Orbitron', monospace;
+  font-size: 13px; letter-spacing: 2px;
+  display: none;
+}
+#pace.ahead { color: #7dff9a; text-shadow: 0 0 10px rgba(125, 255, 154, .6); }
+#pace.behind { color: #ff5e7a; text-shadow: 0 0 10px rgba(255, 94, 122, .6); }
+
+#combo {
+  position: absolute;
+  top: calc(max(18px, env(safe-area-inset-top)) + 26px);
+  right: 18px;
+  text-align: right;
+  display: none;
+  font-family: 'Orbitron', monospace;
+  font-size: 13px; letter-spacing: 2px;
+  color: #ff9d2e;
+  text-shadow: 0 0 12px rgba(255, 157, 46, .7);
+}
+#combo-barwrap {
+  width: 92px; height: 4px;
+  background: rgba(255, 255, 255, .12);
+  border-radius: 2px;
+  margin-top: 6px; margin-left: auto;
+  overflow: hidden;
+}
+#combo-bar {
+  height: 100%; width: 100%;
+  background: linear-gradient(90deg, #ff9d2e, #ffd94d);
+  border-radius: 2px;
+}
+.best-line.dim { color: #6a6a85; margin-top: 8px; }
+
 #timer {
   position: absolute;
   top: calc(max(10px, env(safe-area-inset-top)) + clamp(40px, 8.2vw, 62px));
