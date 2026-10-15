@@ -51,7 +51,9 @@
       <div class="dim"><span style="color:#ff4d2e;font-weight:700">Red orbs</span> explode — clear the path.</div>
     </div>
     <button id="start-btn" class="btn">TAP TO START</button>
+    <button id="help-btn" class="btn ghost small">HOW TO PLAY</button>
     <div id="menu-best" class="best-line">BEST 0</div>
+    <div id="rival-banner" class="best-line rival hidden"></div>
     <div id="ach-line" class="best-line dim">TROPHIES 0/12</div>
     <div id="career-line" class="best-line dim"></div>
     <div id="streak-line" class="best-line dim"></div>
@@ -74,6 +76,7 @@
       <button id="retry-btn" class="btn">RETRY</button>
       <button id="share-btn" class="btn ghost">SHARE</button>
     </div>
+    <div id="death-tip" class="death-tip"></div>
     <div id="run-history"></div>
     <div id="share-note" class="share-note hidden">score copied — go flex it</div>
   </div>
@@ -84,6 +87,27 @@
   <div class="panel small">
     <div class="go-title">PAUSED</div>
     <button id="resume-btn" class="btn">RESUME</button>
+    <button id="help-btn2" class="btn ghost small">HOW TO PLAY</button>
+  </div>
+</div>
+
+<!-- How to play -->
+<div id="help" class="overlay hidden">
+  <div class="panel">
+    <div class="go-title">HOW TO PLAY</div>
+    <div class="help-list">
+      <div><b>TAP / SPACE</b> — flip gravity. Every flip costs 1 energy.</div>
+      <div><span class="orb-word">Gold orbs</span> recharge 1 flip (+5 pts). Run dry and you're stuck.</div>
+      <div><b>Near miss</b> — graze an obstacle for +15 and slow-mo.</div>
+      <div><b>Combo</b> — chain tricks within 4s to build up to x5 score.</div>
+      <div><b class="cyan">Bounce pads</b> — hit one mid-flip to spring back to your side.</div>
+      <div><b class="red">Volatile orbs</b> — red orbs explode, vaporizing nearby obstacles.</div>
+      <div><b>Powerups</b> — <span class="cyan">shield</span> eats one hit · <span class="pink">magnet</span> vacuums orbs · <span class="amber">overdrive</span> doubles score.</div>
+      <div><b>Gates</b> — flip through the amber window. Dead center pays <b>PERFECT</b>.</div>
+      <div><b>Pistons</b> — spikes slide out with a red shimmer. Flip the moment you see it.</div>
+      <div><b>Surge</b> — every 45s: 10s of double points at higher speed.</div>
+    </div>
+    <button id="help-close" class="btn">GOT IT</button>
   </div>
 </div>
 

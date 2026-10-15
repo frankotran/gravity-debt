@@ -228,6 +228,12 @@ function tickTimer() {
     const fs = Math.floor(score);
     if (fs >= 500) unlockAch('score500');
     if (fs >= 1000) unlockAch('score1000');
+    if (rival && !rivalBeaten && fs >= rival.score) {
+      rivalBeaten = true;
+      floater(W / 2, H * 0.3, 'RIVAL BEATEN!', '#ff9d2e');
+      SFX.fanfare();
+      buzz([30, 30, 30, 30, 60]);
+    }
     fxStatus();
   }
   if (elapsed >= 30) unlockAch('survive30');
@@ -353,6 +359,39 @@ function smashShield(ob, i) {
   fxStatus();
 }
 
+// ---------- Rival challenge (via shared link ?score=&mode=) ----------
+let rival = null, rivalBeaten = false;
+try {
+  const qp = new URLSearchParams(location.search);
+  const rs = parseInt(qp.get('score') || '0', 10) || 0;
+  if (rs > 0) rival = { score: rs, mode: qp.get('mode') || 'classic' };
+} catch (e) { /* ignore */ }
+function renderRival() {
+  const el = $('rival-banner');
+  if (!el) return;
+  if (rival) {
+    const ml = rival.mode !== 'classic' && MODES[rival.mode] ? ' (' + MODES[rival.mode].label + ')' : '';
+    el.textContent = 'RIVAL ' + rival.score + ml + ' — BEAT IT';
+    el.classList.remove('hidden');
+  } else {
+    el.classList.add('hidden');
+  }
+}
+
+// ---------- Death tips (contextual, by cause) ----------
+const DEATH_TIPS = {
+  spike:  'Spikes only bite their own rail — flip early, land late.',
+  wall:   'Walls span the whole gap — be on the other rail before you arrive.',
+  gate:   'Thread the amber window dead-center: it pays PERFECT.',
+  drifter: 'Drifters swing widest at the extremes — time your pass there.',
+  piston: 'Pistons shimmer red before they strike — flip the moment you see it.',
+};
+let deathCause = null;
+
+// ---------- Score milestones ----------
+const MILESTONES = [100, 250, 500, 1000, 2000, 5000, 10000];
+let nextMilestone = 0;
+
 // ---------- Achievements (persistent) ----------
 const ACHS = [
   { id: 'firstflip',  label: 'First flip' },
@@ -453,6 +492,9 @@ document.querySelectorAll('#mode-row .sel-btn').forEach(b => {
 });
 $('theme-prev').addEventListener('click', e => { e.stopPropagation(); cycleTheme(-1); });
 $('theme-next').addEventListener('click', e => { e.stopPropagation(); cycleTheme(1); });
+$('help-btn').addEventListener('click', e => { e.stopPropagation(); SFX.click(); $('help').classList.remove('hidden'); });
+$('help-btn2').addEventListener('click', e => { e.stopPropagation(); SFX.click(); $('help').classList.remove('hidden'); });
+$('help-close').addEventListener('click', e => { e.stopPropagation(); SFX.click(); $('help').classList.add('hidden'); });
 function setMode(m) {
   if (!MODES[m]) return;
   if (m !== mode) {
@@ -681,6 +723,7 @@ function startGame() {
   combo = 0; comboT = 0; mult = 1; renderCombo();
   fxEl.style.display = 'none';
   runCurve = []; lastCurveSample = 0; bouncesThisRun = 0;
+  nextMilestone = 0; rivalBeaten = false; deathCause = null;
   slowmoT = 0; freezeT = 0; flash = 0;
   shield = false; magnetT = 0; surgeT = 0; invulnT = 0;
   eventSurgeT = 0; surgeWarnT = 0; nextSurgeAt = 45;
@@ -788,8 +831,9 @@ function checkPadCollision() {
   }
 }
 
-function die() {
+function die(cause) {
   if (state !== 'playing') return;
+  deathCause = cause || null;
   state = 'dying'; deathT = 0;
   shake = 22;
   freezeT = 0.12;  // freeze-frame beat before the explosion settles
@@ -851,20 +895,24 @@ function showGameOver() {
   $('st-flips').textContent = flips;
   $('st-orbs').textContent = orbsGot;
   $('st-near').textContent = nearCount;
+  const dtip = $('death-tip');
+  if (dtip) dtip.textContent = DEATH_TIPS[deathCause] || 'Grab gold orbs to keep your flip energy up.';
   refreshBest();
   hud.classList.add('hidden');
   gameoverEl.classList.remove('hidden');
 }
 
 function shareScore() {
-  const txt = 'I scored ' + Math.floor(score) + ' in GRAVITY DEBT — every flip costs. Beat me: ' + location.href;
+  const fs = Math.floor(score);
+  const url = location.origin + location.pathname + '?score=' + fs + '&mode=' + mode;
+  const txt = 'I scored ' + fs + ' in GRAVITY DEBT (' + MODES[mode].label + ') — every flip costs. Beat me: ' + url;
   const done = () => {
     const n = $('share-note');
     n.classList.remove('hidden');
     setTimeout(() => n.classList.add('hidden'), 2200);
   };
   if (navigator.share) {
-    navigator.share({ title: 'GRAVITY DEBT', text: txt, url: location.href }).catch(() => {});
+    navigator.share({ title: 'GRAVITY DEBT', text: txt, url }).catch(() => {});
   } else if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(txt).then(done).catch(done);
   } else { done(); }
@@ -1056,7 +1104,7 @@ function update(dt) {
       const r = shrunkRect(ob);
       if (px + pr > r.x && px - pr < r.x + r.w && py + pr > r.y && py - pr < r.y + r.h) {
         if (shield) { smashShield(ob, i); i--; }
-        else { die(); return; }
+        else { die(ob.kind); return; }
       }
     }
   }
@@ -1080,6 +1128,13 @@ function update(dt) {
   // --- score: survive = points ---
   score += speed * dt * 0.02 * scoreMult();
   setScore(score);
+  // milestones
+  if (nextMilestone < MILESTONES.length && score >= MILESTONES[nextMilestone]) {
+    floater(W / 2, H * 0.28, MILESTONES[nextMilestone] + '!', '#ffd94d');
+    SFX.power();
+    buzz([20, 20, 20]);
+    nextMilestone++;
+  }
   tickTimer();
 }
 
@@ -1592,6 +1647,7 @@ window.__gd = {
   get surgeT() { return surgeT; },
   get eventSurgeT() { return eventSurgeT; },
   get surgeWarnT() { return surgeWarnT; },
+  get rivalBeaten() { return rivalBeaten; },
   get obstacles() {
     return obstacles.map(o => ({ x: o.x, y: o.y, w: o.w, h: o.h, kind: o.kind, tag: o.tag || null }));
   },
@@ -1633,6 +1689,7 @@ renderCareer();
 bumpStreak();
 renderTheme();
 document.querySelectorAll('#mode-row .sel-btn').forEach(b => b.classList.toggle('sel', b.dataset.mode === mode));
+renderRival();
 setScore(0);
 requestAnimationFrame(loop);
 
