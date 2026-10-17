@@ -186,11 +186,6 @@ html, body {
 }
 .rh-row.rh-new { color: #ffd94d; }
 
-.pip.debt {
-  background: #ff5e7a;
-  box-shadow: 0 0 10px rgba(255, 94, 122, .8);
-}
-
 .btn.small { font-size: 12px; padding: 10px 18px; margin-top: 10px; }
 .btn.ghost.small { font-size: 12px; padding: 10px 18px; margin-top: 10px; }
 
@@ -409,6 +404,10 @@ html, body {
   cursor: pointer;
 }
 .icon-btn.off { color: #ff5e7a; border-color: rgba(255,94,122,.4); }
+.icon-btn.top-right {
+  bottom: auto;
+  top: max(14px, env(safe-area-inset-top)); right: 16px;
+}
 
 @media (max-height: 500px) {
   .panel { padding: 24px 30px; }

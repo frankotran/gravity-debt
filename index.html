@@ -39,7 +39,6 @@
       <button class="sel-btn" data-mode="marathon">MARATHON</button>
       <button class="sel-btn" data-mode="greed">GREED</button>
       <button class="sel-btn" data-mode="blitz">BLITZ</button>
-      <button class="sel-btn" data-mode="daily">DAILY</button>
     </div>
     <div class="select-row">
       <button id="theme-prev" class="sel-btn arrow" aria-label="previous theme">‹</button>
@@ -53,7 +52,7 @@
     </div>
     <div class="howto">
       <div><span class="key">TAP</span> / <span class="key">SPACE</span> flip gravity</div>
-      <div class="dim">Grab <span class="orb-word">orbs</span> to recharge &mdash; at 0 you borrow into debt.</div>
+      <div class="dim">Grab <span class="orb-word">orbs</span> to recharge &mdash; run dry and you're stuck.</div>
       <div class="dim">Hit a <span style="color:#7df9ff;font-weight:700">bounce pad</span> mid-flip to spring back home.</div>
       <div class="dim">Grab powerups: <span style="color:#7df9ff;font-weight:700">shield</span> · <span style="color:#ff5e7a;font-weight:700">magnet</span> · <span style="color:#ff9d2e;font-weight:700">overdrive</span>.</div>
       <div class="dim"><span style="color:#ff4d2e;font-weight:700">Red orbs</span> explode — clear the path.</div>
@@ -99,6 +98,8 @@
   <div class="panel small">
     <div class="go-title">PAUSED</div>
     <button id="resume-btn" class="btn">RESUME</button>
+    <button id="restart-btn" class="btn ghost small">RESTART</button>
+    <button id="quit-btn" class="btn ghost small">QUIT TO MENU</button>
     <button id="help-btn2" class="btn ghost small">HOW TO PLAY</button>
   </div>
 </div>
@@ -109,7 +110,6 @@
     <div class="go-title">HOW TO PLAY</div>
     <div class="help-list">
       <div><b>TAP / SPACE</b> — flip gravity. Every flip costs 1 energy.</div>
-      <div><b class="red">Overdraft</b> — at 0 energy you can borrow 2 flips into debt. Orbs repay debt first.</div>
       <div><span class="orb-word">Gold orbs</span> recharge 1 flip (+5 pts). Run dry and you're stuck.</div>
       <div><b>Near miss</b> — graze an obstacle for +15 and slow-mo.</div>
       <div><b>Combo</b> — chain tricks within 4s to build up to x5 score.</div>
@@ -127,6 +127,7 @@
 </div>
 
 <button id="mute-btn" class="icon-btn" aria-label="toggle sound">SOUND ON</button>
+<button id="pause-btn" class="icon-btn top-right hidden" aria-label="pause game">PAUSE</button>
 
 <script src="game.js"></script>
 </body>

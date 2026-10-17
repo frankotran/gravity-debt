@@ -39,28 +39,9 @@ const MODES = {
   marathon: { label: 'MARATHON', energyMax: 4, accel: 14, maxSpeed: 1150, orbScore: 5 },
   greed:    { label: 'GREED',    energyMax: 6, accel: 9,  maxSpeed: 1000, orbScore: 10 },
   blitz:    { label: 'BLITZ',    energyMax: 6, accel: 12, maxSpeed: 1100, orbScore: 5 },
-  daily:    { label: 'DAILY',    energyMax: 5, accel: 9,  maxSpeed: 1000, orbScore: 5 },
 };
 let mode = store.get('gd_mode') || 'classic';
 if (!MODES[mode]) mode = 'classic';
-
-// ---------- Daily challenge: same track for everyone, every day ----------
-// Dedicated spawn RNG: only spawn decisions consume it, so per-frame
-// visuals (meteors, particles, music) can never desync the track.
-function mulberry32(a) {
-  return function () {
-    a |= 0; a = (a + 0x6D2B79F5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-function dailySeed() {
-  const d = new Date();
-  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
-}
-let rngState = null;
-function R() { return rngState ? rngState() : Math.random(); }
 
 // ---------- Unlockable themes (background + rails + player palette) ----------
 const THEMES = [
@@ -203,14 +184,8 @@ let energy = CFG.energyStart;
 let score = 0, elapsed = 0, speed = CFG.baseSpeed;
 let flips = 0, orbsGot = 0, nearCount = 0;
 let best = 0, bestCurve = null;
-function bestKey() {
-  if (mode === 'daily') return 'gd_best_daily_' + dailySeed(); // auto-resets each day
-  return 'gd_best' + (mode === 'classic' ? '' : '_' + mode);
-}
-function curveKey() {
-  if (mode === 'daily') return 'gd_bestcurve_daily_' + dailySeed();
-  return 'gd_bestcurve' + (mode === 'classic' ? '' : '_' + mode);
-}
+function bestKey() { return 'gd_best' + (mode === 'classic' ? '' : '_' + mode); }
+function curveKey() { return 'gd_bestcurve' + (mode === 'classic' ? '' : '_' + mode); }
 function loadBest() {
   best = parseInt(store.get(bestKey()) || '0', 10) || 0;
   try { bestCurve = JSON.parse(store.get(curveKey()) || 'null'); } catch (e) { bestCurve = null; }
@@ -244,10 +219,9 @@ function renderPips() {
   let html = '';
   for (let i = 0; i < CFG.energyMax; i++) {
     const on = i < energy ? ' on' : '';
-    const danger = energy <= 2 && energy > 0 ? ' danger' : '';
+    const danger = energy <= 2 ? ' danger' : '';
     html += '<div class="pip' + on + danger + '"></div>';
   }
-  for (let d = 0; d < -energy; d++) html += '<div class="pip debt"></div>'; // overdraft
   pipsEl.innerHTML = html;
 }
 function setScore(v) { scoreEl.textContent = Math.floor(v); }
@@ -273,10 +247,6 @@ function tickTimer() {
   const t = mode === 'blitz' ? fmtTime(Math.max(0, Math.ceil(blitzLeft))) : fmtTime(elapsed);
   if (t !== lastTimerShown) {
     lastTimerShown = t; timerEl.textContent = t;
-    if (mode === 'blitz') {
-      blitzLeft -= 1;
-      if (blitzLeft <= 0) { endBlitz(); return; }
-    }
     // ghost pace vs best run
     const bs = bestScoreAt(elapsed);
     if (bs !== null && elapsed > 2) {
@@ -464,11 +434,9 @@ function renderStats() {
       : 'TOP KILLER: —';
   }
   if (m) {
-    const modes = ['classic', 'marathon', 'greed', 'blitz', 'daily'];
+    const modes = ['classic', 'marathon', 'greed', 'blitz'];
     m.textContent = modes.map(md => {
-      const key = md === 'daily'
-        ? 'gd_best_daily_' + dailySeed()
-        : 'gd_best' + (md === 'classic' ? '' : '_' + md);
+      const key = 'gd_best' + (md === 'classic' ? '' : '_' + md);
       return MODES[md].label.slice(0, 2) + ' ' + (parseInt(store.get(key) || '0', 10) || 0);
     }).join(' · ');
   }
@@ -560,7 +528,6 @@ const ACHS = [
   { id: 'powerup',    label: 'Grab a powerup' },
   { id: 'volatile',   label: 'Detonate a volatile orb' },
   { id: 'mystery',    label: 'Open a mystery orb' },
-  { id: 'overdraft',  label: 'Borrow a flip' },
 ];
 let ach = {};
 try { ach = JSON.parse(store.get('gd_ach') || '{}') || {}; } catch (e) { ach = {}; }
@@ -649,7 +616,8 @@ $('theme-prev').addEventListener('click', e => { e.stopPropagation(); cycleTheme
 function toMenu() {
   SFX.click();
   state = 'menu';
-  rngState = null;
+  paused = false;
+  $('pause-btn').classList.add('hidden');
   gameoverEl.classList.add('hidden');
   hud.classList.add('hidden');
   menu.classList.remove('hidden');
@@ -684,6 +652,9 @@ gameoverEl.addEventListener('pointerdown', e => {
 $('retry-btn').addEventListener('click', e => { e.stopPropagation(); startGame(); });
 $('share-btn').addEventListener('click', e => { e.stopPropagation(); shareScore(); });
 $('resume-btn').addEventListener('click', () => togglePause(false));
+$('restart-btn').addEventListener('click', () => { togglePause(false); startGame(); });
+$('quit-btn').addEventListener('click', () => { togglePause(false); toMenu(); });
+$('pause-btn').addEventListener('click', () => togglePause());
 muteBtn.addEventListener('click', e => { e.stopPropagation(); toggleMute(); });
 document.addEventListener('contextmenu', e => e.preventDefault());
 window.addEventListener('keydown', e => {
@@ -735,7 +706,7 @@ function addWall(x, s) { // tall block hugging a surface — must be on the othe
   });
 }
 function addOrb(x, y) {
-  orbs.push({ x, y, r: 11, taken: false, ph: R() * 6.28, mystery: R() < 0.07 });
+  orbs.push({ x, y, r: 11, taken: false, ph: Math.random() * 6.28, mystery: Math.random() < 0.07 });
 }
 function addGate(x) {
   // Two amber walls leaving a generous middle window — flip THROUGH it
@@ -750,12 +721,12 @@ function addDrifter(x) {
   const s = 46;
   obstacles.push({
     kind: 'drifter', x, y: (floorY + ceilY) / 2 - s / 2, w: s, h: s,
-    ph: R() * 6.28, minClear: Infinity, counted: false,
+    ph: Math.random() * 6.28, minClear: Infinity, counted: false,
   });
 }
 function addPad(x, y) {
   // friendly mid-air platform: touch it mid-flip and bounce back home
-  pads.push({ x: x - 48, y: y - 7, w: 96, h: 14, ph: R() * 6.28 });
+  pads.push({ x: x - 48, y: y - 7, w: 96, h: 14, ph: Math.random() * 6.28 });
 }
 function gapAfter() { return speed * rand(0.50, 0.80); } // time-based spacing
 
@@ -763,13 +734,13 @@ function gapAfter() { return speed * rand(0.50, 0.80); } // time-based spacing
 function patMustSpike(x) {
   const s = playerSurf();
   addSpike(x, s);
-  if (mode === 'greed' && R() < 0.6) addSpike(x + 130, s); // greed: denser
+  if (mode === 'greed' && Math.random() < 0.6) addSpike(x + 130, s); // greed: denser
   consecCost++; return 120;
 }
 function patFreeSpike(x) {
   const s = oppSurf();
   addSpike(x, s);
-  if (mode === 'greed' && R() < 0.6) addSpike(x + 130, s); // greed: denser
+  if (mode === 'greed' && Math.random() < 0.6) addSpike(x + 130, s); // greed: denser
   consecCost = 0; return 120;
 }
 function patWall(x)        { addWall(x, playerSurf()); consecCost++; return 150; }
@@ -798,10 +769,10 @@ function patHop(x) {
 function patPowerup(x) {
   // rare floating pickup: shield / magnet / overdrive / chrono — always optional
   const kinds = ['shield', 'magnet', 'overdrive', 'chrono'];
-  const kind = kinds[(R() * kinds.length) | 0];
+  const kind = kinds[(Math.random() * kinds.length) | 0];
   powerups.push({
-    x: x + 110, y: (floorY + ceilY) / 2 + (R() * 140 - 70),
-    r: 20, kind, taken: false, ph: R() * 6.28,
+    x: x + 110, y: (floorY + ceilY) / 2 + rand(-70, 70),
+    r: 20, kind, taken: false, ph: Math.random() * 6.28,
   });
   return 230;
 }
@@ -811,7 +782,7 @@ function patVolatile(x) {
   addGate(x);
   orbs.push({
     x: x + 60, y: (floorY + ceilY) / 2, r: 13,
-    taken: false, ph: R() * 6.28, volatile: true,
+    taken: false, ph: Math.random() * 6.28, volatile: true,
   });
   consecCost++; return 290;
 }
@@ -822,7 +793,7 @@ function patPiston(x) {
   // piston spikes slide out of your rail with a warning shimmer — read it and flip
   const s = playerSurf();
   addPiston(x + 90, s);
-  if (R() < 0.5) addPiston(x + 260, s);
+  if (Math.random() < 0.5) addPiston(x + 260, s);
   consecCost++; return 320;
 }
 function patOrbArc(x) {
@@ -848,8 +819,8 @@ function choosePattern(x) {
     if (tutStage === 2 && !tutSpikeSpawned) { tutSpikeSpawned = true; return patMustSpike(x); }
     return patRest();
   }
-  const r = R();
-  const canAfford = energy > -1 && consecCost < 2;
+  const r = Math.random();
+  const canAfford = energy > 1 && consecCost < 2;
   if (!canAfford) {
     // Mercy rule: only patterns survivable with zero flips.
     if (r < 0.42) return patFreeSpike(x);
@@ -878,8 +849,6 @@ function startGame() {
   const M = MODES[mode];
   CFG.energyMax = M.energyMax; CFG.accel = M.accel;
   CFG.maxSpeed = M.maxSpeed; CFG.orbScore = M.orbScore;
-  // daily challenge: seeded RNG → the same track all day
-  rngState = mode === 'daily' ? mulberry32(dailySeed()) : null;
   blitzLeft = 60; endTitle = 'OUT OF MOVES'; rushT = 0;
   lastTimerShown = '';
   grav = 1; px = Math.max(90, W * 0.30); py = floorY - CFG.playerR; vy = 0;
@@ -895,6 +864,7 @@ function startGame() {
   gameoverEl.classList.add('hidden');
   pausedEl.classList.add('hidden');
   hud.classList.remove('hidden');
+  $('pause-btn').classList.remove('hidden');
   $('share-note').classList.add('hidden');
   renderPips(); setScore(0); refreshBest();
   lastTimerShown = ''; timerEl.textContent = '0:00';
@@ -914,15 +884,13 @@ function startGame() {
   Music.start();
 }
 
-const DEBT_MAX = 2; // overdraft: borrow this many flips past zero
 function doFlip() {
-  if (energy <= -DEBT_MAX) {
+  if (energy <= 0) {
     denyFlash = 0.6; shake = Math.max(shake, 5);
     SFX.deny();
     floater(px, py - 44, 'NO FLIPS', '#ff5e7a');
     return;
   }
-  const borrowed = energy <= 0;
   energy--;
   flipFrom = grav; // remember where we came from — a bounce pad sends us back
   grav *= -1;
@@ -931,12 +899,6 @@ function doFlip() {
   flips++;
   career.flips++;
   unlockAch('firstflip');
-  if (borrowed) {
-    unlockAch('overdraft');
-    floater(px, py - 44, 'OVERDRAFT!', '#ff5e7a');
-    SFX.deny();
-    buzz([40, 40]);
-  }
   shake = Math.max(shake, 3);
   waves.push({ x: px, y: py, r: CFG.playerR, life: 1 });
   for (let i = 0; i < 10; i++) {
@@ -944,10 +906,11 @@ function doFlip() {
       x: px + rand(-10, 10), y: py + rand(-10, 10),
       vx: rand(-160, 60), vy: rand(-160, 160),
       life: rand(0.25, 0.55), max: 0.55, size: rand(2, 5),
-      color: borrowed ? '#ff5e7a' : (grav === 1 ? '#00e5ff' : '#ff4dd2'),
+      color: grav === 1 ? '#00e5ff' : '#ff4dd2',
     });
   }
-  if (!borrowed) { SFX.flip(); buzz(12); }
+  SFX.flip();
+  buzz(12);
   renderPips();
 }
 
@@ -956,7 +919,7 @@ function mysteryOrb(o) {
   orbsGot++;
   feedCombo();
   unlockAch('mystery');
-  const r = R();
+  const r = Math.random();
   waves.push({ x: o.x, y: o.y, r: 6, life: 0.7 });
   if (r < 0.35) {
     const pts = 50 * mult * scoreMult();
@@ -966,7 +929,7 @@ function mysteryOrb(o) {
     energy = CFG.energyMax; renderPips();
     floater(o.x, o.y - 18, 'MYSTERY: ENERGY FULL', '#c77dff');
   } else if (r < 0.85) {
-    const k = ['shield', 'magnet', 'overdrive'][Math.floor(R() * 3)];
+    const k = ['shield', 'magnet', 'overdrive'][Math.floor(Math.random() * 3)];
     if (k === 'shield') { shield = true; floater(o.x, o.y - 18, 'MYSTERY: SHIELD!', '#c77dff'); }
     else if (k === 'magnet') { magnetT = 8; floater(o.x, o.y - 18, 'MYSTERY: MAGNET!', '#c77dff'); }
     else { surgeT = 10; floater(o.x, o.y - 18, 'MYSTERY: OVERDRIVE!', '#c77dff'); }
@@ -982,18 +945,13 @@ function mysteryOrb(o) {
 }
 function collectOrb(o) {
   o.taken = true;
+  energy = Math.min(CFG.energyMax, energy + 1);
   orbsGot++;
   feedCombo();
-  if (energy < 0) {
-    energy++; // creditors take it — repays debt, no points
-    floater(o.x, o.y - 18, 'DEBT REPAID', '#ff5e7a');
-  } else {
-    energy = Math.min(CFG.energyMax, energy + 1);
-    const pts = CFG.orbScore * mult * scoreMult();
-    score += pts;
-    setScore(score);
-    floater(o.x, o.y - 18, '+' + pts, '#ffd94d');
-  }
+  const pts = CFG.orbScore * mult * scoreMult();
+  score += pts;
+  setScore(score);
+  floater(o.x, o.y - 18, '+' + pts, '#ffd94d');
   waves.push({ x: o.x, y: o.y, r: 6, life: 0.7 }); // collect pulse
   for (let i = 0; i < 8; i++) {
     particles.push({
@@ -1083,7 +1041,7 @@ function die(cause) {
 
 function showGameOver() {
   state = 'over';
-  rngState = null; // daily seed only applies mid-run
+  $('pause-btn').classList.add('hidden');
   const fs = Math.floor(score);
   const gt = $('go-title');
   if (gt) gt.textContent = endTitle;
@@ -1375,6 +1333,11 @@ function update(dt) {
   score += speed * dt * 0.02 * scoreMult();
   setScore(score);
   if (tutorial) tutAdvance(dt);
+  // blitz: 60-second score attack, real-time countdown
+  if (mode === 'blitz') {
+    blitzLeft -= dt;
+    if (blitzLeft <= 0) { blitzLeft = 0; endBlitz(); return; }
+  }
   // milestones
   if (nextMilestone < MILESTONES.length && score >= MILESTONES[nextMilestone]) {
     floater(W / 2, H * 0.28, MILESTONES[nextMilestone] + '!', '#ffd94d');
