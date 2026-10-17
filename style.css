@@ -148,6 +148,29 @@ html, body {
   font-size: 12px; letter-spacing: 2px;
   color: #cfd2e8; min-width: 170px;
 }
+#skin-name {
+  font-family: 'Orbitron', monospace;
+  font-size: 12px; letter-spacing: 2px;
+  color: #cfd2e8; min-width: 170px;
+}
+
+#tut-banner {
+  position: absolute;
+  top: 24%; left: 50%;
+  transform: translateX(-50%);
+  font-family: 'Orbitron', monospace;
+  font-size: 15px; letter-spacing: 2px;
+  color: #fff;
+  text-shadow: 0 0 14px rgba(0, 229, 255, .8);
+  background: rgba(0, 0, 0, .45);
+  border: 1px solid rgba(0, 229, 255, .4);
+  border-radius: 10px;
+  padding: 10px 18px;
+  white-space: nowrap;
+  display: none;
+  animation: rivalPulse 1.4s ease-in-out infinite;
+  z-index: 5;
+}
 
 #run-history { margin-top: 14px; }
 .rh-title {
@@ -162,6 +185,11 @@ html, body {
   color: #8a8aa3; padding: 3px 12px;
 }
 .rh-row.rh-new { color: #ffd94d; }
+
+.pip.debt {
+  background: #ff5e7a;
+  box-shadow: 0 0 10px rgba(255, 94, 122, .8);
+}
 
 .btn.small { font-size: 12px; padding: 10px 18px; margin-top: 10px; }
 .btn.ghost.small { font-size: 12px; padding: 10px 18px; margin-top: 10px; }

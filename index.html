@@ -26,6 +26,7 @@
   <div id="best-hud">BEST 0</div>
   <div id="combo"><span id="combo-txt">COMBO x2</span><div id="combo-barwrap"><div id="combo-bar"></div></div></div>
   <div id="fx-status"></div>
+  <div id="tut-banner"></div>
 </div>
 
 <!-- Menu -->
@@ -45,9 +46,14 @@
       <span id="theme-name">NEON NIGHTS</span>
       <button id="theme-next" class="sel-btn arrow" aria-label="next theme">›</button>
     </div>
+    <div class="select-row">
+      <button id="skin-prev" class="sel-btn arrow" aria-label="previous skin">‹</button>
+      <span id="skin-name">ORB</span>
+      <button id="skin-next" class="sel-btn arrow" aria-label="next skin">›</button>
+    </div>
     <div class="howto">
       <div><span class="key">TAP</span> / <span class="key">SPACE</span> flip gravity</div>
-      <div class="dim">Grab <span class="orb-word">orbs</span> to recharge &mdash; run dry and you're stuck.</div>
+      <div class="dim">Grab <span class="orb-word">orbs</span> to recharge &mdash; at 0 you borrow into debt.</div>
       <div class="dim">Hit a <span style="color:#7df9ff;font-weight:700">bounce pad</span> mid-flip to spring back home.</div>
       <div class="dim">Grab powerups: <span style="color:#7df9ff;font-weight:700">shield</span> · <span style="color:#ff5e7a;font-weight:700">magnet</span> · <span style="color:#ff9d2e;font-weight:700">overdrive</span>.</div>
       <div class="dim"><span style="color:#ff4d2e;font-weight:700">Red orbs</span> explode — clear the path.</div>
@@ -59,6 +65,8 @@
     <div id="rival-banner" class="best-line rival hidden"></div>
     <div id="ach-line" class="best-line dim">TROPHIES 0/12</div>
     <div id="career-line" class="best-line dim"></div>
+    <div id="stats-killer" class="best-line dim"></div>
+    <div id="stats-modes" class="best-line dim"></div>
     <div id="streak-line" class="best-line dim"></div>
   </div>
 </div>
@@ -101,6 +109,7 @@
     <div class="go-title">HOW TO PLAY</div>
     <div class="help-list">
       <div><b>TAP / SPACE</b> — flip gravity. Every flip costs 1 energy.</div>
+      <div><b class="red">Overdraft</b> — at 0 energy you can borrow 2 flips into debt. Orbs repay debt first.</div>
       <div><span class="orb-word">Gold orbs</span> recharge 1 flip (+5 pts). Run dry and you're stuck.</div>
       <div><b>Near miss</b> — graze an obstacle for +15 and slow-mo.</div>
       <div><b>Combo</b> — chain tricks within 4s to build up to x5 score.</div>
@@ -108,7 +117,7 @@
       <div><b class="red">Volatile orbs</b> — red orbs explode, vaporizing nearby obstacles.</div>
       <div><b class="violet">Mystery orbs</b> — rare ? orbs with random jackpots.</div>
       <div><b>Gold rush</b> — every 8 orbs triggers 10s of double points.</div>
-      <div><b>Powerups</b> — <span class="cyan">shield</span> eats one hit · <span class="pink">magnet</span> vacuums orbs · <span class="amber">overdrive</span> doubles score.</div>
+      <div><b>Powerups</b> — <span class="cyan">shield</span> eats one hit · <span class="pink">magnet</span> vacuums orbs · <span class="amber">overdrive</span> doubles score · <span class="violet">bullet time</span> slows everything.</div>
       <div><b>Gates</b> — flip through the amber window. Dead center pays <b>PERFECT</b>.</div>
       <div><b>Pistons</b> — spikes slide out with a red shimmer. Flip the moment you see it.</div>
       <div><b>Surge</b> — every 45s: 10s of double points at higher speed.</div>
