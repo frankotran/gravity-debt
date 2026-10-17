@@ -153,6 +153,17 @@ html, body {
   font-size: 12px; letter-spacing: 2px;
   color: #cfd2e8; min-width: 170px;
 }
+#skin-name.locked { color: #ff5e7a; }
+#skin-lock {
+  color: #ff5e7a;
+  font-size: 11px; letter-spacing: 2px;
+  display: none;
+  animation: rivalPulse 1.2s ease-in-out infinite;
+}
+#start-btn.disabled {
+  opacity: 0.35;
+  filter: grayscale(0.7);
+}
 
 #tut-banner {
   position: absolute;

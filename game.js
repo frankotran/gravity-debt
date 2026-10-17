@@ -74,30 +74,50 @@ function cycleTheme(d) {
 
 // ---------- Player skins (trophy-unlocked ball styles) ----------
 const SKINS = [
-  { id: 'orb',   name: 'ORB',    need: 0 },
-  { id: 'comet', name: 'COMET',  need: 4 },
-  { id: 'ring',  name: 'RINGED', need: 8 },
-  { id: 'wisp',  name: 'WISP',   need: 12 },
+  { id: 'orb',     name: 'ORB',     need: 0 },
+  { id: 'terra',   name: 'TERRA',   need: 3 },
+  { id: 'comet',   name: 'COMET',   need: 5 },
+  { id: 'lava',    name: 'LAVA',     need: 7 },
+  { id: 'ring',    name: 'RINGED',  need: 9 },
+  { id: 'frost',   name: 'FROST',    need: 11 },
+  { id: 'eclipse', name: 'ECLIPSE',  need: 13 },
 ];
-let skinIdx = 0;
-try { skinIdx = parseInt(store.get('gd_skin') || '0', 10) || 0; } catch (e) {}
-if (skinIdx < 0 || skinIdx >= SKINS.length) skinIdx = 0;
-function skinUnlocked(i) { return Object.keys(ach).length >= SKINS[i].need; }
-function skin() { return skinUnlocked(skinIdx) ? SKINS[skinIdx] : SKINS[0]; }
+const SKIN_IDS = SKINS.map(s => s.id);
+let skinId = 'orb';
+try {
+  const raw = store.get('gd_skin') || 'orb';
+  if (/^\d+$/.test(raw)) {
+    // migrate from the old index-based scheme
+    skinId = ['orb', 'comet', 'ring', 'wisp'][parseInt(raw, 10)] || 'orb';
+    if (skinId === 'wisp') skinId = 'orb';
+  } else skinId = raw;
+} catch (e) {}
+if (!SKIN_IDS.includes(skinId)) skinId = 'orb';
+function skinDef() { return SKINS.find(s => s.id === skinId) || SKINS[0]; }
+function skinUnlockedId(id) {
+  const s = SKINS.find(s => s.id === id) || SKINS[0];
+  return Object.keys(ach).length >= s.need;
+}
+function skin() { return skinUnlockedId(skinId) ? skinDef() : SKINS[0]; }
+function skinLocked() { return !skinUnlockedId(skinId); }
 function renderSkin() {
-  const el = $('skin-name');
-  if (!el) return;
-  const sk = SKINS[skinIdx];
-  el.textContent = skinUnlocked(skinIdx) ? sk.name : sk.name + ' · ' + sk.need + ' TROPHIES';
+  const el = $('skin-name'), lock = $('skin-lock'), sb = $('start-btn');
+  const s = skinDef(), unlocked = skinUnlockedId(skinId);
+  if (el) {
+    el.textContent = unlocked ? s.name : '🔒 ' + s.name;
+    el.classList.toggle('locked', !unlocked);
+  }
+  if (lock) {
+    lock.style.display = unlocked ? 'none' : 'block';
+    lock.textContent = unlocked ? '' : s.need + ' TROPHIES TO UNLOCK — GAME LOCKED';
+  }
+  if (sb) sb.classList.toggle('disabled', !unlocked);
 }
 function cycleSkin(d) {
-  skinIdx = (skinIdx + d + SKINS.length) % SKINS.length;
-  if (skinUnlocked(skinIdx)) {
-    store.set('gd_skin', String(skinIdx));
-    SFX.click();
-  } else {
-    SFX.deny();
-  }
+  const i = SKINS.findIndex(s => s.id === skinId);
+  skinId = SKINS[(i + d + SKINS.length) % SKINS.length].id;
+  store.set('gd_skin', skinId);
+  if (skinUnlockedId(skinId)) SFX.click(); else SFX.deny();
   renderSkin();
 }
 
@@ -625,6 +645,7 @@ function toMenu() {
   renderRival();
   updateAchLine();
   renderStats();
+  renderSkin();
 }
 $('menu-btn').addEventListener('click', e => { e.stopPropagation(); toMenu(); });
 $('skin-prev').addEventListener('click', e => { e.stopPropagation(); cycleSkin(-1); });
@@ -844,6 +865,13 @@ function choosePattern(x) {
 
 // ---------- Game flow ----------
 function startGame() {
+  if (skinLocked()) {
+    // locked skin selected — the game stays locked until it's earned
+    SFX.deny();
+    buzz([60, 40, 60]);
+    renderSkin();
+    return;
+  }
   SFX.click();
   // apply the selected challenge mode
   const M = MODES[mode];
@@ -1628,20 +1656,69 @@ function drawPlayer(t) {
   ctx.globalAlpha = 1;
   if (state === 'dying') return; // exploded
   const sk = skin().id;
-  // wisp skin: flickering ghost
-  if (sk === 'wisp') ctx.globalAlpha = 0.55 + 0.4 * Math.abs(Math.sin(t * 9));
+  const pr = CFG.playerR;
   // invulnerability blink after a shield save
   if (invulnT > 0 && Math.floor(t * 14) % 2 === 0) ctx.globalAlpha = 0.35;
-  // glow core
   ctx.save();
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 26;
-  const g = ctx.createRadialGradient(px, py, 0, px, py, CFG.playerR);
-  g.addColorStop(0, '#ffffff');
-  g.addColorStop(0.6, color);
-  g.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(px, py, CFG.playerR, 0, 6.2832); ctx.fill();
+  if (sk === 'eclipse') {
+    // black hole with a violet corona
+    ctx.shadowColor = '#b28dff'; ctx.shadowBlur = 30;
+    ctx.fillStyle = '#05050a';
+    ctx.beginPath(); ctx.arc(px, py, pr, 0, 6.2832); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(178,141,255,0.9)'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(px, py, pr + 4 + Math.sin(t * 5) * 2, 0, 6.2832); ctx.stroke();
+  } else if (sk === 'terra') {
+    // blue marble with drifting continents and an ice cap
+    ctx.shadowColor = '#2e9bff'; ctx.shadowBlur = 22;
+    ctx.fillStyle = '#2e9bff';
+    ctx.beginPath(); ctx.arc(px, py, pr, 0, 6.2832); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#3ddc78';
+    const a1 = t * 0.8;
+    ctx.beginPath(); ctx.ellipse(px + Math.cos(a1) * pr * 0.45, py + Math.sin(a1) * pr * 0.3, pr * 0.42, pr * 0.28, a1, 0, 6.2832); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(px - Math.cos(a1) * pr * 0.5, py - Math.sin(a1) * pr * 0.35, pr * 0.3, pr * 0.22, -a1, 0, 6.2832); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath(); ctx.ellipse(px, py - pr * 0.72, pr * 0.5, pr * 0.22, 0, 0, 6.2832); ctx.fill();
+  } else if (sk === 'lava') {
+    // molten core, pulsing
+    ctx.shadowColor = '#ff5a2e'; ctx.shadowBlur = 26 + 10 * Math.sin(t * 6);
+    const g = ctx.createRadialGradient(px, py, 0, px, py, pr);
+    g.addColorStop(0, '#ffe08a');
+    g.addColorStop(0.5, '#ff5a2e');
+    g.addColorStop(1, '#7a1a08');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(px, py, pr, 0, 6.2832); ctx.fill();
+  } else if (sk === 'frost') {
+    // ice world with twinkling sparkles
+    ctx.shadowColor = '#bfefff'; ctx.shadowBlur = 24;
+    const g = ctx.createRadialGradient(px, py, 0, px, py, pr);
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(0.6, '#bfefff');
+    g.addColorStop(1, '#5aa8d8');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(px, py, pr, 0, 6.2832); ctx.fill();
+    ctx.shadowBlur = 0; ctx.fillStyle = '#fff';
+    for (let i = 0; i < 3; i++) {
+      const sa = t * 2 + i * 2.094;
+      const sx = px + Math.cos(sa) * (pr + 6), sy = py + Math.sin(sa) * (pr + 6);
+      const ss = 2.5 + 1.5 * Math.sin(t * 8 + i);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy - ss); ctx.lineTo(sx + ss * 0.4, sy);
+      ctx.lineTo(sx, sy + ss); ctx.lineTo(sx - ss * 0.4, sy);
+      ctx.closePath(); ctx.fill();
+    }
+  } else {
+    // ORB / COMET: classic glow core
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 26;
+    const g = ctx.createRadialGradient(px, py, 0, px, py, pr);
+    g.addColorStop(0, '#ffffff');
+    g.addColorStop(0.6, color);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(px, py, pr, 0, 6.2832); ctx.fill();
+  }
   // orbiting spark
   const a = t * 6;
   ctx.shadowBlur = 8;
