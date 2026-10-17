@@ -1,6 +1,6 @@
 'use strict';
 /* ============================================================
-   GRAVITY DEBT — every flip costs.
+   ORBITAL — every flip costs.
    One-tap gravity flipper. Flips cost 1 energy. Grab orbs.
    Run dry and you're stuck. 100% client-side, $0 budget.
    ============================================================ */
@@ -686,7 +686,7 @@ function togglePause(force) {
 // ---------- Spawner: patterns ----------
 // Every pattern spawns ahead of the player. The spawner tracks energy and
 // NEVER emits an unavoidable pattern when the player couldn't afford the
-// flips to survive it. That's the fairness contract of Gravity Debt.
+// flips to survive it. That's the fairness contract of the game.
 function surfY(s) { return s === 'floor' ? floorY : ceilY; }
 function playerSurf() { return grav === 1 ? 'floor' : 'ceil'; }
 function oppSurf() { return grav === 1 ? 'ceil' : 'floor'; }
@@ -1103,14 +1103,14 @@ function showGameOver() {
 function shareScore() {
   const fs = Math.floor(score);
   const url = location.origin + location.pathname + '?score=' + fs + '&mode=' + mode;
-  const txt = 'I scored ' + fs + ' in GRAVITY DEBT (' + MODES[mode].label + ') — every flip costs. Beat me: ' + url;
+  const txt = 'I scored ' + fs + ' in ORBITAL (' + MODES[mode].label + ') — every flip costs. Beat me: ' + url;
   const done = () => {
     const n = $('share-note');
     n.classList.remove('hidden');
     setTimeout(() => n.classList.add('hidden'), 2200);
   };
   if (navigator.share) {
-    navigator.share({ title: 'GRAVITY DEBT', text: txt, url }).catch(() => {});
+    navigator.share({ title: 'ORBITAL', text: txt, url }).catch(() => {});
   } else if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(txt).then(done).catch(done);
   } else { done(); }
