@@ -491,7 +491,17 @@ document.querySelectorAll('#mode-row .sel-btn').forEach(b => {
   b.addEventListener('click', e => { e.stopPropagation(); setMode(b.dataset.mode); });
 });
 $('theme-prev').addEventListener('click', e => { e.stopPropagation(); cycleTheme(-1); });
-$('theme-next').addEventListener('click', e => { e.stopPropagation(); cycleTheme(1); });
+function toMenu() {
+  SFX.click();
+  state = 'menu';
+  gameoverEl.classList.add('hidden');
+  hud.classList.add('hidden');
+  menu.classList.remove('hidden');
+  loadBest();
+  renderRival();
+  updateAchLine();
+}
+$('menu-btn').addEventListener('click', e => { e.stopPropagation(); toMenu(); });
 $('help-btn').addEventListener('click', e => { e.stopPropagation(); SFX.click(); $('help').classList.remove('hidden'); });
 $('help-btn2').addEventListener('click', e => { e.stopPropagation(); SFX.click(); $('help').classList.remove('hidden'); });
 $('help-close').addEventListener('click', e => { e.stopPropagation(); SFX.click(); $('help').classList.add('hidden'); });
