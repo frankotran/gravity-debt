@@ -1201,13 +1201,32 @@ function update(dt) {
     onSurface = false;
   }
 
-  // trail
-  trail.push({ x: px, y: py, life: 1 });
-  const comet = skin().id === 'comet';
-  if (comet) trail.push({ x: px + rand(-5, 5), y: py + rand(-5, 5), life: 1 });
-  const trailCap = comet ? 46 : 26;
+  // trail — each skin leaves its own signature
+  const skId = skin().id;
+  const th = theme();
+  const pcol = grav === 1 ? th.down : th.up;
+  if (skId === 'comet') {
+    trail.push({ x: px + rand(-6, 6), y: py + rand(-6, 6), life: 1, k: 'dot', c: Math.random() < 0.5 ? '#ffb02e' : '#ff5a2e' });
+    trail.push({ x: px + rand(-6, 6), y: py + rand(-6, 6), life: 1, k: 'dot', c: '#ffe08a' });
+  } else if (skId === 'lava') {
+    trail.push({ x: px + rand(-8, 8), y: py + rand(-8, 8), life: 1, k: 'ember', c: '#ff7a2e', vx: rand(-30, 30), vy: rand(-70, -20) });
+  } else if (skId === 'frost') {
+    trail.push({ x: px + rand(-6, 6), y: py + rand(-6, 6), life: 1, k: 'spark', c: '#d8f6ff' });
+  } else if (skId === 'eclipse') {
+    trail.push({ x: px + rand(-7, 7), y: py + rand(-7, 7), life: 1, k: 'wisp', c: '#b28dff' });
+  } else if (skId === 'terra') {
+    trail.push({ x: px + rand(-6, 6), y: py + rand(-6, 6), life: 1, k: 'dot', c: Math.random() < 0.5 ? '#2e9bff' : '#3ddc78' });
+  } else if (skId === 'ring') {
+    trail.push({ x: px + rand(-6, 6), y: py + rand(-6, 6), life: 1, k: 'ring', c: pcol });
+  } else {
+    trail.push({ x: px, y: py, life: 1, k: 'dot', c: pcol });
+  }
+  const trailCap = skId === 'comet' ? 46 : 30;
   if (trail.length > trailCap) trail.shift();
-  for (const t of trail) t.life -= dt * 3.2;
+  for (const t of trail) {
+    t.life -= dt * 3.2;
+    if (t.vx) { t.x += t.vx * dt; t.y += t.vy * dt; }
+  }
 
   // --- spawner (warmup: nothing for the first 3 seconds) ---
   if (elapsed > 3) {
@@ -1649,9 +1668,38 @@ function drawPlayer(t) {
   // trail
   for (const tr of trail) {
     if (tr.life <= 0) continue;
-    ctx.globalAlpha = Math.max(0, tr.life) * 0.35;
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(tr.x, tr.y, CFG.playerR * tr.life * 0.9, 0, 6.2832); ctx.fill();
+    const ta = Math.max(0, tr.life);
+    if (tr.k === 'ember') {
+      // lava: rising flickering embers
+      ctx.globalAlpha = ta * (0.5 + 0.5 * Math.abs(Math.sin(t * 22 + tr.x)));
+      ctx.fillStyle = tr.c || '#ff7a2e';
+      ctx.beginPath(); ctx.arc(tr.x, tr.y, 3.5 * ta + 1, 0, 6.2832); ctx.fill();
+    } else if (tr.k === 'spark') {
+      // frost: tiny ice crystals
+      ctx.globalAlpha = ta * 0.8;
+      ctx.fillStyle = tr.c || '#d8f6ff';
+      const ss = 4 * ta + 1;
+      ctx.beginPath();
+      ctx.moveTo(tr.x, tr.y - ss); ctx.lineTo(tr.x + ss * 0.35, tr.y);
+      ctx.lineTo(tr.x, tr.y + ss); ctx.lineTo(tr.x - ss * 0.35, tr.y);
+      ctx.closePath(); ctx.fill();
+    } else if (tr.k === 'ring') {
+      // ringed: fading mini saturn rings
+      ctx.globalAlpha = ta * 0.5;
+      ctx.strokeStyle = tr.c || color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.ellipse(tr.x, tr.y, 6 * ta + 2, 3 * ta + 1, -0.5, 0, 6.2832); ctx.stroke();
+    } else if (tr.k === 'wisp') {
+      // eclipse: violet afterglow
+      ctx.globalAlpha = ta * 0.4;
+      ctx.fillStyle = tr.c || '#b28dff';
+      ctx.beginPath(); ctx.arc(tr.x, tr.y, 6 * ta + 2, 0, 6.2832); ctx.fill();
+    } else {
+      // orb / terra / comet: fading dots
+      ctx.globalAlpha = ta * 0.35;
+      ctx.fillStyle = tr.c || color;
+      ctx.beginPath(); ctx.arc(tr.x, tr.y, CFG.playerR * ta * 0.9, 0, 6.2832); ctx.fill();
+    }
   }
   ctx.globalAlpha = 1;
   if (state === 'dying') return; // exploded
