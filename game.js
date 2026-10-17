@@ -1223,12 +1223,13 @@ function update(dt) {
   }
   const trailCap = skId === 'comet' ? 46 : 30;
   if (trail.length > trailCap) trail.shift();
-  // while running on a rail, sparks fly backward off the player's heels
-  // (mid-flip the trail just hangs in the air as you travel through it)
+  // while running on a rail, sparks stream behind the player (to the left,
+  // since the world scrolls left past you). Mid-flip the trail just hangs
+  // in the air as you travel through it.
   if (onSurface) {
     for (let i = Math.max(0, trail.length - 3); i < trail.length; i++) {
       const tr = trail[i];
-      tr.vx = (tr.vx || 0) + rand(80, 220);
+      tr.vx = (tr.vx || 0) - rand(80, 220);
       tr.vy = (tr.vy || 0) + rand(-40, 40);
     }
   }
