@@ -179,6 +179,7 @@ html, body {
 .help-list .pink { color: #ff5e7a; font-weight: 700; }
 .help-list .amber { color: #ff9d2e; font-weight: 700; }
 .help-list .red { color: #ff4d2e; font-weight: 700; }
+.help-list .violet { color: #c77dff; font-weight: 700; }
 
 .death-tip {
   margin-top: 12px;

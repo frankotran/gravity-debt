@@ -38,9 +38,29 @@ const MODES = {
   classic:  { label: 'CLASSIC',  energyMax: 5, accel: 9,  maxSpeed: 1000, orbScore: 5 },
   marathon: { label: 'MARATHON', energyMax: 4, accel: 14, maxSpeed: 1150, orbScore: 5 },
   greed:    { label: 'GREED',    energyMax: 6, accel: 9,  maxSpeed: 1000, orbScore: 10 },
+  blitz:    { label: 'BLITZ',    energyMax: 6, accel: 12, maxSpeed: 1100, orbScore: 5 },
+  daily:    { label: 'DAILY',    energyMax: 5, accel: 9,  maxSpeed: 1000, orbScore: 5 },
 };
 let mode = store.get('gd_mode') || 'classic';
 if (!MODES[mode]) mode = 'classic';
+
+// ---------- Daily challenge: same track for everyone, every day ----------
+// Dedicated spawn RNG: only spawn decisions consume it, so per-frame
+// visuals (meteors, particles, music) can never desync the track.
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function dailySeed() {
+  const d = new Date();
+  return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+}
+let rngState = null;
+function R() { return rngState ? rngState() : Math.random(); }
 
 // ---------- Unlockable themes (background + rails + player palette) ----------
 const THEMES = [
@@ -154,8 +174,14 @@ let energy = CFG.energyStart;
 let score = 0, elapsed = 0, speed = CFG.baseSpeed;
 let flips = 0, orbsGot = 0, nearCount = 0;
 let best = 0, bestCurve = null;
-function bestKey() { return 'gd_best' + (mode === 'classic' ? '' : '_' + mode); }
-function curveKey() { return 'gd_bestcurve' + (mode === 'classic' ? '' : '_' + mode); }
+function bestKey() {
+  if (mode === 'daily') return 'gd_best_daily_' + dailySeed(); // auto-resets each day
+  return 'gd_best' + (mode === 'classic' ? '' : '_' + mode);
+}
+function curveKey() {
+  if (mode === 'daily') return 'gd_bestcurve_daily_' + dailySeed();
+  return 'gd_bestcurve' + (mode === 'classic' ? '' : '_' + mode);
+}
 function loadBest() {
   best = parseInt(store.get(bestKey()) || '0', 10) || 0;
   try { bestCurve = JSON.parse(store.get(curveKey()) || 'null'); } catch (e) { bestCurve = null; }
@@ -174,7 +200,7 @@ let slowmoT = 0, freezeT = 0, flash = 0;
 let shield = false, magnetT = 0, surgeT = 0, invulnT = 0;
 let eventSurgeT = 0, surgeWarnT = 0, nextSurgeAt = 45;
 // career stats & streak (persistent)
-let career = { flips: 0, time: 0, bestMult: 1, runs: 0 };
+let career = { flips: 0, time: 0, bestMult: 1, runs: 0, xp: 0 };
 try { career = Object.assign(career, JSON.parse(store.get('gd_career') || '{}')); } catch (e) {}
 
 // ---------- DOM ----------
@@ -204,6 +230,7 @@ function fxStatus() {
   if (shield) parts.push('SHIELD');
   if (magnetT > 0) parts.push('MAGNET ' + Math.ceil(magnetT) + 's');
   if (surgeT > 0) parts.push('OVERDRIVE ' + Math.ceil(surgeT) + 's');
+  if (rushT > 0) parts.push('GOLD RUSH ' + Math.ceil(rushT) + 's');
   if (eventSurgeT > 0) parts.push('SURGE ' + Math.ceil(eventSurgeT) + 's');
   else if (surgeWarnT > 0) parts.push('SURGE INCOMING');
   fxEl.textContent = parts.join(' · ');
@@ -212,9 +239,13 @@ function fxStatus() {
 
 let lastTimerShown = '';
 function tickTimer() {
-  const t = fmtTime(elapsed);
+  const t = mode === 'blitz' ? fmtTime(Math.max(0, Math.ceil(blitzLeft))) : fmtTime(elapsed);
   if (t !== lastTimerShown) {
     lastTimerShown = t; timerEl.textContent = t;
+    if (mode === 'blitz') {
+      blitzLeft -= 1;
+      if (blitzLeft <= 0) { endBlitz(); return; }
+    }
     // ghost pace vs best run
     const bs = bestScoreAt(elapsed);
     if (bs !== null && elapsed > 2) {
@@ -258,6 +289,7 @@ function scoreMult() {
   let m = 1;
   if (surgeT > 0) m *= 2;
   if (eventSurgeT > 0) m *= 2;
+  if (rushT > 0) m *= 2;
   return m;
 }
 
@@ -392,6 +424,46 @@ let deathCause = null;
 const MILESTONES = [100, 250, 500, 1000, 2000, 5000, 10000];
 let nextMilestone = 0;
 
+// ---------- BLITZ mode: 60-second score attack ----------
+let blitzLeft = 60, endTitle = 'OUT OF MOVES';
+function endBlitz() {
+  if (state !== 'playing') return;
+  endTitle = 'TIME UP';
+  SFX.fanfare();
+  showGameOver();
+}
+
+// ---------- Player titles (lifetime XP) ----------
+const TITLES = [
+  [0, 'ROOKIE'],
+  [1000, 'FLIPPER'],
+  [5000, 'DEBT DODGER'],
+  [15000, 'GRAVITY GREMLIN'],
+  [40000, 'ORBIT BREAKER'],
+  [100000, 'DEBT GOD'],
+];
+function titleFor(xp) {
+  let t = TITLES[0][1];
+  for (const [need, name] of TITLES) if (xp >= need) t = name;
+  return t;
+}
+
+// ---------- Gold rush (orb streak) ----------
+let rushT = 0;
+function startRush() {
+  rushT = 10;
+  floater(W / 2, H * 0.25, 'GOLD RUSH · 2X', '#ffd94d');
+  SFX.fanfare();
+  buzz([30, 30, 60]);
+  for (let i = 0; i < 20; i++) {
+    particles.push({
+      x: px + rand(-30, 30), y: py + rand(-30, 30),
+      vx: rand(-200, 200), vy: rand(-200, 200),
+      life: rand(0.4, 0.8), max: 0.8, size: rand(2, 5), color: '#ffd94d',
+    });
+  }
+}
+
 // ---------- Achievements (persistent) ----------
 const ACHS = [
   { id: 'firstflip',  label: 'First flip' },
@@ -406,6 +478,7 @@ const ACHS = [
   { id: 'score1000',  label: 'Score 1000' },
   { id: 'powerup',    label: 'Grab a powerup' },
   { id: 'volatile',   label: 'Detonate a volatile orb' },
+  { id: 'mystery',    label: 'Open a mystery orb' },
 ];
 let ach = {};
 try { ach = JSON.parse(store.get('gd_ach') || '{}') || {}; } catch (e) { ach = {}; }
@@ -494,6 +567,7 @@ $('theme-prev').addEventListener('click', e => { e.stopPropagation(); cycleTheme
 function toMenu() {
   SFX.click();
   state = 'menu';
+  rngState = null;
   gameoverEl.classList.add('hidden');
   hud.classList.add('hidden');
   menu.classList.remove('hidden');
@@ -576,7 +650,7 @@ function addWall(x, s) { // tall block hugging a surface — must be on the othe
   });
 }
 function addOrb(x, y) {
-  orbs.push({ x, y, r: 11, taken: false, ph: Math.random() * 6.28 });
+  orbs.push({ x, y, r: 11, taken: false, ph: R() * 6.28, mystery: R() < 0.07 });
 }
 function addGate(x) {
   // Two amber walls leaving a generous middle window — flip THROUGH it
@@ -591,12 +665,12 @@ function addDrifter(x) {
   const s = 46;
   obstacles.push({
     kind: 'drifter', x, y: (floorY + ceilY) / 2 - s / 2, w: s, h: s,
-    ph: Math.random() * 6.28, minClear: Infinity, counted: false,
+    ph: R() * 6.28, minClear: Infinity, counted: false,
   });
 }
 function addPad(x, y) {
   // friendly mid-air platform: touch it mid-flip and bounce back home
-  pads.push({ x: x - 48, y: y - 7, w: 96, h: 14, ph: Math.random() * 6.28 });
+  pads.push({ x: x - 48, y: y - 7, w: 96, h: 14, ph: R() * 6.28 });
 }
 function gapAfter() { return speed * rand(0.50, 0.80); } // time-based spacing
 
@@ -604,13 +678,13 @@ function gapAfter() { return speed * rand(0.50, 0.80); } // time-based spacing
 function patMustSpike(x) {
   const s = playerSurf();
   addSpike(x, s);
-  if (mode === 'greed' && Math.random() < 0.6) addSpike(x + 130, s); // greed: denser
+  if (mode === 'greed' && R() < 0.6) addSpike(x + 130, s); // greed: denser
   consecCost++; return 120;
 }
 function patFreeSpike(x) {
   const s = oppSurf();
   addSpike(x, s);
-  if (mode === 'greed' && Math.random() < 0.6) addSpike(x + 130, s); // greed: denser
+  if (mode === 'greed' && R() < 0.6) addSpike(x + 130, s); // greed: denser
   consecCost = 0; return 120;
 }
 function patWall(x)        { addWall(x, playerSurf()); consecCost++; return 150; }
@@ -639,10 +713,10 @@ function patHop(x) {
 function patPowerup(x) {
   // rare floating pickup: shield / magnet / overdrive — always optional
   const kinds = ['shield', 'magnet', 'overdrive'];
-  const kind = kinds[(Math.random() * kinds.length) | 0];
+  const kind = kinds[(R() * kinds.length) | 0];
   powerups.push({
-    x: x + 110, y: (floorY + ceilY) / 2 + rand(-70, 70),
-    r: 20, kind, taken: false, ph: Math.random() * 6.28,
+    x: x + 110, y: (floorY + ceilY) / 2 + (R() * 140 - 70),
+    r: 20, kind, taken: false, ph: R() * 6.28,
   });
   return 230;
 }
@@ -652,7 +726,7 @@ function patVolatile(x) {
   addGate(x);
   orbs.push({
     x: x + 60, y: (floorY + ceilY) / 2, r: 13,
-    taken: false, ph: Math.random() * 6.28, volatile: true,
+    taken: false, ph: R() * 6.28, volatile: true,
   });
   consecCost++; return 290;
 }
@@ -663,7 +737,7 @@ function patPiston(x) {
   // piston spikes slide out of your rail with a warning shimmer — read it and flip
   const s = playerSurf();
   addPiston(x + 90, s);
-  if (Math.random() < 0.5) addPiston(x + 260, s);
+  if (R() < 0.5) addPiston(x + 260, s);
   consecCost++; return 320;
 }
 function patOrbArc(x) {
@@ -683,7 +757,7 @@ function patOrbLine(x) {
 function patRest() { consecCost = 0; return 0; }
 
 function choosePattern(x) {
-  const r = Math.random();
+  const r = R();
   const canAfford = energy > 1 && consecCost < 2;
   if (!canAfford) {
     // Mercy rule: only patterns survivable with zero flips.
@@ -713,6 +787,10 @@ function startGame() {
   const M = MODES[mode];
   CFG.energyMax = M.energyMax; CFG.accel = M.accel;
   CFG.maxSpeed = M.maxSpeed; CFG.orbScore = M.orbScore;
+  // daily challenge: seeded RNG → the same track all day
+  rngState = mode === 'daily' ? mulberry32(dailySeed()) : null;
+  blitzLeft = 60; endTitle = 'OUT OF MOVES'; rushT = 0;
+  lastTimerShown = '';
   grav = 1; px = Math.max(90, W * 0.30); py = floorY - CFG.playerR; vy = 0;
   onSurface = true;
   energy = Math.min(CFG.energyStart, CFG.energyMax);
@@ -772,6 +850,35 @@ function doFlip() {
   renderPips();
 }
 
+function mysteryOrb(o) {
+  o.taken = true;
+  orbsGot++;
+  feedCombo();
+  unlockAch('mystery');
+  const r = R();
+  waves.push({ x: o.x, y: o.y, r: 6, life: 0.7 });
+  if (r < 0.35) {
+    const pts = 50 * mult * scoreMult();
+    score += pts; setScore(score);
+    floater(o.x, o.y - 18, 'MYSTERY +' + pts, '#c77dff');
+  } else if (r < 0.60) {
+    energy = CFG.energyMax; renderPips();
+    floater(o.x, o.y - 18, 'MYSTERY: ENERGY FULL', '#c77dff');
+  } else if (r < 0.85) {
+    const k = ['shield', 'magnet', 'overdrive'][Math.floor(R() * 3)];
+    if (k === 'shield') { shield = true; floater(o.x, o.y - 18, 'MYSTERY: SHIELD!', '#c77dff'); }
+    else if (k === 'magnet') { magnetT = 8; floater(o.x, o.y - 18, 'MYSTERY: MAGNET!', '#c77dff'); }
+    else { surgeT = 10; floater(o.x, o.y - 18, 'MYSTERY: OVERDRIVE!', '#c77dff'); }
+    fxStatus();
+  } else {
+    const pts = 150 * mult * scoreMult();
+    score += pts; setScore(score);
+    floater(o.x, o.y - 18, 'JACKPOT +' + pts, '#ffd94d');
+  }
+  SFX.power();
+  buzz([20, 40, 20]);
+  renderPips();
+}
 function collectOrb(o) {
   o.taken = true;
   energy = Math.min(CFG.energyMax, energy + 1);
@@ -789,8 +896,10 @@ function collectOrb(o) {
     });
   }
   if (orbsGot >= 10) unlockAch('orb10');
+  if (orbsGot % 8 === 0) startRush(); // every 8 orbs: gold rush
   SFX.orb();
   renderPips();
+  fxStatus();
 }
 
 function nearMiss(ob) {
@@ -863,7 +972,10 @@ function die(cause) {
 
 function showGameOver() {
   state = 'over';
+  rngState = null; // daily seed only applies mid-run
   const fs = Math.floor(score);
+  const gt = $('go-title');
+  if (gt) gt.textContent = endTitle;
   const isBest = fs > best;
   if (isBest) {
     best = fs;
@@ -872,7 +984,14 @@ function showGameOver() {
     store.set(curveKey(), JSON.stringify(bestCurve));
   }
   career.time += elapsed;
+  const oldTitle = titleFor(career.xp || 0);
+  career.xp = (career.xp || 0) + fs;
+  const newTitle = titleFor(career.xp);
   store.set('gd_career', JSON.stringify(career));
+  if (newTitle !== oldTitle) {
+    floater(W / 2, H * 0.42, 'NEW TITLE: ' + newTitle, '#c77dff');
+    SFX.fanfare();
+  }
   // run history: last 5 runs, newest first
   let runs = [];
   try { runs = JSON.parse(store.get('gd_runs') || '[]'); } catch (e) { runs = []; }
@@ -1040,7 +1159,8 @@ function update(dt) {
     if (!o.taken) {
       const d = Math.hypot(px - o.x, py - o.y);
       if (d < CFG.playerR + o.r + 6) {
-        if (o.volatile) detonateOrb(o);
+        if (o.mystery) mysteryOrb(o);
+        else if (o.volatile) detonateOrb(o);
         else collectOrb(o);
       }
     }
@@ -1068,6 +1188,7 @@ function update(dt) {
   }
   if (surgeT > 0) surgeT -= dt;
   if (invulnT > 0) invulnT -= dt;
+  if (rushT > 0) rushT -= dt;
 
   // --- timed surge events: warning, then 10s of 2x chaos ---
   if (eventSurgeT <= 0 && surgeWarnT <= 0 && elapsed >= nextSurgeAt) {
@@ -1236,7 +1357,22 @@ function drawOrbs(t) {
   for (const o of orbs) {
     const pulse = 1 + 0.16 * Math.sin(o.ph);
     ctx.save();
-    if (o.volatile) {
+    if (o.mystery) {
+      // mystery: violet ? orb — a little slot machine
+      ctx.shadowColor = '#c77dff';
+      ctx.shadowBlur = 22;
+      const g = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, o.r * pulse);
+      g.addColorStop(0, '#f3e8ff');
+      g.addColorStop(0.55, '#c77dff');
+      g.addColorStop(1, 'rgba(199,125,255,0.15)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(o.x, o.y, o.r * pulse, 0, 6.2832); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#2a0a4a';
+      ctx.font = 'bold ' + Math.round(o.r * 1.3) + 'px Orbitron, monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('?', o.x, o.y + 1);
+    } else if (o.volatile) {
       // volatile: angry red-gold with a warning ring
       ctx.shadowColor = '#ff4d2e';
       ctx.shadowBlur = 22;
@@ -1614,6 +1750,14 @@ function render(t) {
   drawPlayer(t);
   drawHint(t);
   drawVignette(t);
+  if (rushT > 0) {
+    // gold rush: golden glow washing in from the edges
+    const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.36, W / 2, H / 2, Math.max(W, H) * 0.72);
+    g.addColorStop(0, 'rgba(255,217,77,0)');
+    g.addColorStop(1, 'rgba(255,180,40,' + (0.28 + 0.1 * Math.sin(t * 6)).toFixed(3) + ')');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
   if (flash > 0) {
     ctx.fillStyle = 'rgba(255,255,255,' + flash.toFixed(3) + ')';
     ctx.fillRect(0, 0, W, H);
@@ -1661,6 +1805,9 @@ window.__gd = {
   get obstacles() {
     return obstacles.map(o => ({ x: o.x, y: o.y, w: o.w, h: o.h, kind: o.kind, tag: o.tag || null }));
   },
+  get orbs() {
+    return orbs.map(o => ({ x: o.x, y: o.y, r: o.r, mystery: !!o.mystery, volatile: !!o.volatile }));
+  },
 };
 
 // ---------- Career stats & play streak (persistent) ----------
@@ -1672,6 +1819,8 @@ function renderCareer() {
   const el = $('career-line');
   if (el) el.textContent = career.runs + ' RUNS · ' + career.flips + ' FLIPS · ' +
     fmtDur(career.time) + ' AIR TIME · BEST x' + career.bestMult;
+  const tl = $('title-line');
+  if (tl) tl.textContent = titleFor(career.xp || 0);
 }
 function bumpStreak() {
   const today = new Date().toDateString();
